@@ -8,6 +8,8 @@ from typing import cast
 
 import duckdb
 
+from loader import claims
+
 DEFAULT_DATABASE = Path("warehouse.duckdb")
 DEFAULT_SOURCE = Path("data")
 
@@ -34,15 +36,22 @@ def land_window(
     *,
     database: Path = DEFAULT_DATABASE,
     source: Path = DEFAULT_SOURCE,
+    seed: int = claims.DEFAULT_SEED,
 ) -> LoadReport:
     """Land the records belonging to a date window into the raw schema.
 
+    Encounters and their children are selected by service date; claims are
+    selected by the date they were billed, which is days or weeks later, so one
+    window holds two different notions of what belongs to it.
+
     Args:
-        start: First service date to land, inclusive.
-        end: First service date beyond the window, exclusive, so that adjacent
-            windows tile without overlap or gap.
+        start: First date to land, inclusive.
+        end: First date beyond the window, exclusive, so that adjacent windows
+            tile without overlap or gap.
         database: DuckDB file to land into, created if absent.
         source: Directory holding the Synthea CSV export.
+        seed: Salts the injected claim restatements. Fixed by default, because
+            a repeated backfill has to be identical.
 
     Returns:
         The counts landed per table.
@@ -55,7 +64,9 @@ def land_window(
 
     with duckdb.connect(database) as con:
         con.execute("create schema if not exists raw")
-        _create_tables(con, source)
+        con.execute("create schema if not exists meta")
+        _create_source_tables(con, source)
+        claims.create_tables(con)
 
         con.execute(
             """
@@ -73,6 +84,14 @@ def land_window(
         con.execute("begin transaction")
         rows = {name: _land(con, source, name, start, end) for name in WINDOWED_TABLES}
         rows["providers"] = _land_providers(con, source)
+        rows["claims"] = claims.land_arrivals(
+            con,
+            claims_csv=_csv(source, "claims"),
+            encounters_csv=_csv(source, "encounters"),
+            start=start,
+            end=end,
+            seed=seed,
+        )
         con.execute("commit")
 
     return LoadReport(window_start=start, window_end=end, rows=rows)
@@ -82,8 +101,8 @@ def _csv(source: Path, name: str) -> str:
     return str(source / f"{name}.csv")
 
 
-def _create_tables(con: duckdb.DuckDBPyConnection, source: Path) -> None:
-    """Create each raw table from the source's own columns and types, adding the load metadata."""
+def _create_source_tables(con: duckdb.DuckDBPyConnection, source: Path) -> None:
+    """Create each raw table that mirrors a CSV, taking its columns and types from the file."""
     for name in WINDOWED_TABLES:
         con.execute(
             f"""

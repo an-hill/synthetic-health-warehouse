@@ -10,13 +10,15 @@ Release `master-branch-latest` of [`synthea-with-dependencies.jar`](https://gith
 java -jar synthea-with-dependencies.jar \
   -p 500 -s 1 -cs 1 -r 20260101 -e 20260101 \
   --exporter.csv.export=true \
-  --exporter.csv.included_files=patients.csv,encounters.csv,conditions.csv,medications.csv,providers.csv \
+  --exporter.csv.included_files=patients.csv,encounters.csv,conditions.csv,medications.csv,providers.csv,claims.csv \
   --exporter.baseDirectory=./output
 ```
 
-`-e` is what makes the command reproducible, and the upstream README does not mention it. Synthea's `endTime` is initialised from `referenceTime` when the options object is constructed, so `-r` on its own arrives too late to move it and the simulation still runs to the wall clock: generating on a different day would produce a different export from the same seed.
+`-e` is what pins the data, and the upstream README does not mention it. Synthea's `endTime` is initialised from `referenceTime` when the options object is constructed, so `-r` on its own arrives too late to move it and the simulation still runs to the wall clock: generating on a different day would produce a different export from the same seed.
 
-`--exporter.csv.included_files` is the other one that matters. The default exports everything except `patient_expenses.csv`, which pulls in `observations.csv` — larger than these five files combined, and unused here.
+`--exporter.csv.included_files` is the other one that matters. The default exports everything except `patient_expenses.csv`, which pulls in `observations.csv` and `claims_transactions.csv`. The second of those is 216 MB, ten times everything committed here, and holds the charge and payment lines; the amounts in this project come from the encounter instead, so it is left out.
+
+**Reproducible in content, not byte for byte.** Regenerating with the command above returns exactly the same records, verified by comparing sorted contents, but not in the same order: Synthea exports from several threads and whichever finishes first writes first. Committing the output of a second run would therefore produce a large and entirely meaningless diff.
 
 Left at their defaults: `exporter.years_of_history` (10) and `generate.only_alive_patients` (false). State defaults to Massachusetts, so every provider is a Massachusetts one.
 
@@ -29,6 +31,7 @@ Left at their defaults: `exporter.years_of_history` (10) and `generate.only_aliv
 | `conditions.csv` | 19,993 | One per condition onset, 1.58 per encounter on average and up to 11 |
 | `medications.csv` | 29,004 | One per medication order, 2.02 per encounter on average |
 | `providers.csv` | 650 | One per clinician, of which 587 appear in `encounters` |
+| `claims.csv` | 60,828 | One per claim, linked to its encounter by `APPOINTMENTID` |
 
 554 patients rather than 500 because `-p` counts the living: the 54 with a `DEATHDATE` are exported on top of it.
 
@@ -37,3 +40,9 @@ Encounters run from 1915-10-27 to 2025-12-31, but 23,404 of the 31,824 fall in 2
 `ENCOUNTERCLASS` takes ten values: `ambulatory`, `wellness`, `outpatient`, `urgentcare`, `emergency`, `inpatient`, `home`, `virtual`, `snf`, and `hospice`. Inpatient encounters, which the readmission model is built on, are the thin one at 618 across the whole span, roughly 20 to 50 a year.
 
 Conditions are coded in SNOMED CT throughout, using 250 distinct codes. That is the set the condition-grouping seed has to cover.
+
+Claims fan out over encounters at 1.91 apiece, from 1 to 8, and the heavier classes carry more: an inpatient stay bills 7.97 on average against 1.45 for an ambulatory visit. Getting per-encounter cost right across that fan-out is what the grain tests exist to catch.
+
+`LASTBILLEDDATE1` is a real billing date, distinct from `SERVICEDATE` and populated on every row. The lag between them is right-skewed the way a real one is: mean 0.77 days, median 0, 95th percentile 6, and a tail out to 100. All the claims for one encounter share a billing date, so a visit is always billed as a unit.
+
+The export contains no `ADJUSTMENT` transactions, so no claim ever re-arrives amended. Restatement is the one distortion the loader injects, and the only thing `meta.injection_log` records.
