@@ -14,9 +14,11 @@ java -jar synthea-with-dependencies.jar \
   --exporter.baseDirectory=./output
 ```
 
-`-e` is what makes the command reproducible, and the upstream README does not mention it. Synthea's `endTime` is initialised from `referenceTime` when the options object is constructed, so `-r` on its own arrives too late to move it and the simulation still runs to the wall clock: generating on a different day would produce a different export from the same seed.
+`-e` is what pins the data, and the upstream README does not mention it. Synthea's `endTime` is initialised from `referenceTime` when the options object is constructed, so `-r` on its own arrives too late to move it and the simulation still runs to the wall clock: generating on a different day would produce a different export from the same seed.
 
 `--exporter.csv.included_files` is the other one that matters. The default exports everything except `patient_expenses.csv`, which pulls in `observations.csv` — larger than these five files combined, and unused here.
+
+**Reproducible in content, not byte for byte.** Regenerating with the command above returns exactly the same records, verified by comparing sorted contents, but not in the same order: Synthea exports from several threads and whichever finishes first writes first. Committing the output of a second run would therefore produce a large and entirely meaningless diff.
 
 Left at their defaults: `exporter.years_of_history` (10) and `generate.only_alive_patients` (false). State defaults to Massachusetts, so every provider is a Massachusetts one.
 
