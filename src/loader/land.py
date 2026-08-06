@@ -74,10 +74,13 @@ def land_window(
         claims.create_tables(con)
         patients.create_tables(con)
 
+        # Every column, not just the key, so that landing the encounters
+        # themselves is a copy out of this table rather than a second scan of
+        # the file it was just built from.
         con.execute(
             """
             create or replace temp table window_encounters as
-            select Id, START::date as _service_date
+            select *, START::date as _service_date
             from read_csv_auto(?) where START::date >= ? and START::date < ?
             """,
             [_csv(source, "encounters"), start, end],
@@ -114,11 +117,22 @@ def _csv(source: Path, name: str) -> str:
 
 
 def _create_source_tables(con: duckdb.DuckDBPyConnection, source: Path) -> None:
-    """Create each raw table that mirrors a CSV, taking its columns and types from the file."""
+    """Create each raw table that mirrors a CSV, taking its columns and types from the file.
+
+    Tables already present are skipped rather than left to `if not exists`, which
+    still binds its select and so re-sniffs every CSV on every run to describe
+    tables it then declines to touch.
+    """
+    existing = {
+        row[0]
+        for row in con.execute("select table_name from information_schema.tables where table_schema = 'raw'").fetchall()
+    }
     for name in WINDOWED_TABLES:
+        if name in existing:
+            continue
         con.execute(
             f"""
-            create table if not exists raw.{name} as
+            create table raw.{name} as
             select *, now() as _loaded_at, null::date as _service_date
             from read_csv_auto(?) limit 0
             """,
@@ -133,19 +147,24 @@ def _land(con: duckdb.DuckDBPyConnection, source: Path, name: str, start: date, 
     than matching a window identifier, so re-landing one day inside a month that
     was already loaded removes that day alone.
     """
-    key = "Id" if name == "encounters" else "ENCOUNTER"
     con.execute(
         f"delete from raw.{name} where _service_date >= ? and _service_date < ?",
         [start, end],
     )
-    con.execute(
-        f"""
-        insert into raw.{name}
-        select s.*, now(), w._service_date
-        from read_csv_auto(?) s join window_encounters w on s.{key} = w.Id
-        """,
-        [_csv(source, name)],
-    )
+    if name == "encounters":
+        con.execute("""
+            insert into raw.encounters
+            select * exclude (_service_date), now(), _service_date from window_encounters
+        """)
+    else:
+        con.execute(
+            f"""
+            insert into raw.{name}
+            select s.*, now(), w._service_date
+            from read_csv_auto(?) s join window_encounters w on s.ENCOUNTER = w.Id
+            """,
+            [_csv(source, name)],
+        )
     return _rowcount(con)
 
 
