@@ -12,7 +12,7 @@ Synthea CSVs ──→ loader ──→ raw ──→ staging ──→ marts
 
 The loader is the load-bearing piece. It takes a date window and lands only the records belonging to it, injecting the distortions the warehouse then has to cope with, and writing an injection log recording exactly what it injected. Everything downstream is measured against that log: distortions the pipeline should absorb silently are verified by reconciling totals, and distortions it should reject are verified by a named test failing.
 
-Data comes from [Synthea](https://github.com/synthetichealth/synthea), run once with its CSV export committed to the repository. No Java is needed to run this project.
+Data comes from [Synthea](https://github.com/synthetichealth/synthea), run once with its CSV export committed to the repository. No Java is needed to run this project. It covers 554 patients over 31,824 encounters running to the end of 2025; `data/README.md` records the exact command that produced it and what a modeller needs to know about its shape.
 
 ## Versions
 
