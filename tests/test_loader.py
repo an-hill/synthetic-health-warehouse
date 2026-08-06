@@ -10,6 +10,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
+from loader import land as land_module
 from loader.land import land_window
 
 SOURCE = Path("data")
@@ -90,6 +91,28 @@ def test_loading_the_same_window_twice_changes_nothing(database: Path) -> None:
     land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
 
     assert before == snapshot()
+
+
+def test_a_load_that_fails_partway_leaves_the_window_untouched(database: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without a transaction the delete would already have committed, emptying the window."""
+    land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
+    before = {t: landed(database, f"select count(*) from raw.{t}") for t in TABLES}
+
+    real_land = land_module._land
+
+    def die_after_deleting(con, source, name, start, end):
+        """Reproduce a load killed between a table's delete and its insert."""
+        if name == "medications":
+            con.execute("delete from raw.medications")
+            raise RuntimeError("load dies partway through the window")
+        return real_land(con, source, name, start, end)
+
+    monkeypatch.setattr(land_module, "_land", die_after_deleting)
+
+    with pytest.raises(RuntimeError, match="dies partway"):
+        land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
+
+    assert {t: landed(database, f"select count(*) from raw.{t}") for t in TABLES} == before
 
 
 def test_adjacent_windows_tile_into_the_combined_window(database: Path, tmp_path: Path) -> None:

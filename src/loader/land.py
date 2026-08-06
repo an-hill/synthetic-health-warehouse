@@ -66,8 +66,14 @@ def land_window(
             [_csv(source, "encounters"), start, end],
         )
 
+        # One transaction for the whole window. Each table is deleted before it
+        # is inserted, so a load that dies in between would otherwise leave the
+        # window empty rather than replaced: a hole that reports no error and
+        # that dbt would happily build clean models over.
+        con.execute("begin transaction")
         rows = {name: _land(con, source, name, start, end) for name in WINDOWED_TABLES}
         rows["providers"] = _land_providers(con, source)
+        con.execute("commit")
 
     return LoadReport(window_start=start, window_end=end, rows=rows)
 
