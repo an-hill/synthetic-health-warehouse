@@ -5,14 +5,16 @@ An analytics pipeline over synthetic patient data, built to work through dbt and
 ## The shape of it
 
 ```
-Synthea CSVs ──→ loader ──→ raw ──→ staging ──→ marts
+Synthea export ──→ loader ──→ raw ──→ staging ──→ marts
                 (windowed)         (1 model     (dims, facts,
                                     per source)  analytics)
 ```
 
 The loader is the load-bearing piece. It takes a date window and lands only the records belonging to it. Most of what makes that awkward is already in the export: claims fan out over encounters and are billed days or weeks after the service. What the export lacks, the loader injects and records in an injection log, and everything downstream is measured against that log: distortions the pipeline should absorb silently are verified by reconciling totals, and distortions it should reject are verified by a named test failing.
 
-Data comes from [Synthea](https://github.com/synthetichealth/synthea), run once with its CSV export committed to the repository. No Java is needed to run this project. It covers 554 patients over 31,824 encounters and 60,828 claims, running to the end of 2025; `data/README.md` records the exact command that produced it and what a modeller needs to know about its shape.
+Data comes from [Synthea](https://github.com/synthetichealth/synthea), run once with its export committed to the repository as Parquet. No Java is needed to run this project. It covers 554 patients over 31,824 encounters and 60,828 claims, running to the end of 2025; `data/README.md` records the exact command that produced it and what a modeller needs to know about its shape.
+
+Synthea emits CSV. It is converted once to Parquet, which the loader reads about twenty times faster.
 
 ## Versions
 
@@ -43,7 +45,7 @@ Re-running a window replaces it rather than adding to it, so a backfill can be r
 
 Encounters and the conditions and medications recorded at them are selected by **service date**: the window holds what happened in it.
 
-Claims come from Synthea's own `claims.csv`, one row per real claim linked to its encounter, and are selected by the date they were **billed**. An encounter bills 1 to 8 of them, averaging 7.97 for an inpatient stay against 1.45 for an ambulatory visit, and they share a billing date, so a visit is billed as a unit. Their amounts apportion the encounter's cost, with the last claim taking the remainder rather than its own rounded share, so per-encounter totals reconcile exactly despite the fan-out. That fan-out is the correctness problem the grain tests exist to catch.
+Claims come from Synthea's own claims export, one row per real claim linked to its encounter, and are selected by the date they were **billed**. An encounter bills 1 to 8 of them, averaging 7.97 for an inpatient stay against 1.45 for an ambulatory visit, and they share a billing date, so a visit is billed as a unit. Their amounts apportion the encounter's cost, with the last claim taking the remainder rather than its own rounded share, so per-encounter totals reconcile exactly despite the fan-out. That fan-out is the correctness problem the grain tests exist to catch.
 
 The billing lag is the export's own and is right-skewed the way a real one is: median 0, 95th percentile 6 days, and a tail out to 100. So `fct_claim`'s lookback is not a number we know by construction; it is a percentile to be estimated from a distribution, accepting a miss rate, which is the production problem rather than a simulation of it.
 
@@ -55,7 +57,7 @@ One consequence worth expecting: the leading edge of a backfill is ragged, becau
 
 `raw.patients_current` holds every patient as they stood at the **window end**, replaced outright on every run. It exists because a dbt snapshot detects change by comparing a source against what it saw last time, and Synthea hands over history directly: dated rows in a file that never changes. The table throws that history away so the snapshot can rediscover it one window at a time, which is what most operational source systems look like anyway.
 
-What changes is the payer, resolved from `payer_transitions.csv`, which is the export's own coverage history rather than anything injected. Landing the window ending 2025-11-01 and then the one ending 2025-12-01 moves four patients: Medicaid to Cigna, Humana to Medicare, Cigna to Aetna, and Medicare to uninsured. Death is the other change, and a deceased patient stays in the table with a flag set, so the snapshot sees a change rather than a row vanishing.
+What changes is the payer, resolved from the payer transitions export, which is the export's own coverage history rather than anything injected. Landing the window ending 2025-11-01 and then the one ending 2025-12-01 moves four patients: Medicaid to Cigna, Humana to Medicare, Cigna to Aetna, and Medicare to uninsured. Death is the other change, and a deceased patient stays in the table with a flag set, so the snapshot sees a change rather than a row vanishing.
 
 It deliberately carries only attributes that can be evaluated as of a date. Marital status, address, income and healthcare expenses are current values fixed at generation time, so stamping them onto a row dated years earlier would assert something false and make any date-aware join to `dim_patient` confidently wrong. Age is left out for a different reason: it is derivable from the birthdate and the date being asked about, and versioning it would add a dimension row per patient per year, burying the changes that matter.
 
@@ -63,11 +65,11 @@ It deliberately carries only attributes that can be evaluated as of a date. Mari
 
 ### What backs this up, and how that differs from production
 
-Nothing backs up `warehouse.duckdb`, because it is derived rather than authoritative. The committed CSVs and the loader reproduce any window on demand, so recovery means re-running the loader, not restoring a file. Reverting the code is git's job and the data follows from it.
+Nothing backs up `warehouse.duckdb`, because it is derived rather than authoritative. The committed export and the loader reproduce any window on demand, so recovery means re-running the loader, not restoring a file. Reverting the code is git's job and the data follows from it.
 
 That works here for a reason that does not hold in production: **the source is immutable and complete**. Every record already exists in `data/`, and the window is the pretence that it does not. Re-landing last March in a year's time returns exactly what it returns today.
 
-A real source accumulates and mutates, so re-reading a past window can legitimately return something different, or nothing at all if the source has aged the records out. Once that is true, the raw layer holds the only copy of what arrived and stops being reproducible. The usual answer is an immutable landing zone, with extracts written once to object storage and never rewritten, and the warehouse loaded from those files rather than from the source. The committed CSVs are that landing zone in miniature, which is the only reason this project can get away with no backups at all.
+A real source accumulates and mutates, so re-reading a past window can legitimately return something different, or nothing at all if the source has aged the records out. Once that is true, the raw layer holds the only copy of what arrived and stops being reproducible. The usual answer is an immutable landing zone, with extracts written once to object storage and never rewritten, and the warehouse loaded from those files rather than from the source. The committed Parquet files are that landing zone in miniature, which is the only reason this project can get away with no backups at all.
 
 Two smaller differences worth naming. A single DuckDB file has no point-in-time recovery, so the transaction guarantees a window is never half-written but nothing lets you read the warehouse as it stood an hour ago. And the loader manufactures restatements that a real extract would merely observe, because the export has none; the late arrivals, by contrast, are the export's own.
 
@@ -91,7 +93,7 @@ Worth knowing before reading the loader, because the split does not run file by 
 
 **Would be deleted.** The restatement injection and `meta.injection_log`, which exist because the export contains no amendments and a merge would otherwise have nothing to collapse. Apportioning the encounter's cost across its claims, which is only needed because the 216 MB transactions file holding the real charges was left out. And `patients_current`'s as-of resolution, since a production source system already shows only current state and needs no help being flattened.
 
-**Would be replaced.** Eight lines. Every `read_csv_auto` call is the seam where a real source connector goes, and nothing around them changes.
+**Would be replaced.** Eight lines. Every `read_parquet` call is the seam where a real source connector goes, and nothing around them changes.
 
 That makes the loader the most scaffolding-heavy part of the project, and it is now finished. The layers that follow are closer to shippable: the staging and mart models are the SQL anyone would write, `fct_claim`'s incremental merge and lookback are a production pattern with the lookback genuinely estimated from an observed distribution, and the Airflow DAG with its retries, pool, and backfill is orchestration as it would really be configured. What the loader buys is that those layers meet real problems — late arrival, fan-out, a mutating dimension — rather than clean data where `merge` and `catchup` would be decorative.
 

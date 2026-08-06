@@ -1,6 +1,6 @@
 """Tests for the windowed loader.
 
-Expectations are computed against the committed CSVs with an independent query
+Expectations are computed against the committed export with an independent query
 rather than hardcoded, so regenerating the export cannot silently rot them.
 """
 
@@ -60,8 +60,8 @@ def expected_encounter_ids(start: date, end: date) -> set[str]:
     """The encounter ids a window should land, read straight from the source."""
     with duckdb.connect() as con:
         rows = con.execute(
-            "select Id from read_csv_auto(?) where START::date >= ? and START::date < ?",
-            [str(SOURCE / "encounters.csv"), start, end],
+            "select Id from read_parquet(?) where START::date >= ? and START::date < ?",
+            [str(SOURCE / "encounters.parquet"), start, end],
         ).fetchall()
     return {row[0] for row in rows}
 
@@ -318,7 +318,7 @@ class TestClaims:
                 ),
                 source_counts as (
                     select APPOINTMENTID as encounter_id, count(*) as claims
-                    from read_csv_auto('{SOURCE / "claims.csv"}')
+                    from read_parquet('{SOURCE / "claims.parquet"}')
                     where LASTBILLEDDATE1::date >= '{CLAIM_WINDOW[0]}' and LASTBILLEDDATE1::date < '{CLAIM_WINDOW[1]}'
                     group by 1
                 )
@@ -337,7 +337,7 @@ class TestClaims:
                     select encounter_id, sum(amount_after) as claimed
                     from meta.injection_log where not is_restatement group by 1
                 ),
-                source as (select Id, TOTAL_CLAIM_COST from read_csv_auto('{SOURCE / "encounters.csv"}'))
+                source as (select Id, TOTAL_CLAIM_COST from read_parquet('{SOURCE / "encounters.parquet"}'))
                 select count(*), count(*) filter (where abs(b.claimed - s.TOTAL_CLAIM_COST) > 0.005)
                 from billed b join source s on b.encounter_id = s.Id""",
         )
@@ -386,7 +386,7 @@ class TestPatientsCurrent:
             database,
             f"""with expected as (
                     select PATIENT as patient_id, PAYER as payer_id
-                    from read_csv_auto('{SOURCE / "payer_transitions.csv"}')
+                    from read_parquet('{SOURCE / "payer_transitions.parquet"}')
                     where START_DATE::date <= '{AS_OF_LATER}' and END_DATE::date > '{AS_OF_LATER}'
                 )
                 select count(*) from raw.patients_current p join expected e using (patient_id)
@@ -412,7 +412,7 @@ class TestPatientsCurrent:
         [(landed_count, born_by_then)] = landed(
             database,
             f"""select (select count(*) from raw.patients_current),
-                       (select count(*) from read_csv_auto('{SOURCE / "patients.csv"}')
+                       (select count(*) from read_parquet('{SOURCE / "patients.parquet"}')
                         where BIRTHDATE <= '1950-01-01')""",
         )
         assert landed_count == born_by_then
@@ -441,7 +441,7 @@ class TestPatientsCurrent:
             database,
             f"""select count(*) from raw.patients_current p
                 where not p.is_deceased and exists (
-                    select 1 from read_csv_auto('{SOURCE / "patients.csv"}') s
+                    select 1 from read_parquet('{SOURCE / "patients.parquet"}') s
                     where s.Id = p.patient_id and s.DEATHDATE > '{AS_OF_MIDLIFE}')""",
         )
         assert still_to_die > 0, "no patient dies after this date, so the assertion above proves nothing"

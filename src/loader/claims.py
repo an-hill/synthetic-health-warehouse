@@ -1,6 +1,6 @@
 """Derives claims from the Synthea export and lands those that arrived in a window.
 
-Claims come from Synthea's own `claims.csv`, one row per real claim, linked to
+Claims come from Synthea's own claims export, one row per real claim, linked to
 its encounter by `APPOINTMENTID`. An encounter bills 1 to 8 of them, and they
 carry a real billing lag: mostly same-day, with a long right tail out to 100
 days. That tail is what `fct_claim`'s lookback has to be estimated against, and
@@ -30,10 +30,10 @@ LOG_COLUMNS = (
 def create_tables(con: duckdb.DuckDBPyConnection) -> None:
     """Create the claim tables, declared rather than inferred from the export.
 
-    The other raw tables mirror their CSV and take its columns wholesale.
+    The other raw tables mirror their export file and take its columns wholesale.
     `raw.claims` cannot: it renames the keys it uses, and its amounts are
-    apportioned from the encounter rather than read from `claims.csv`, which
-    carries no charge column. `meta.injection_log` has no source file at all.
+    apportioned from the encounter rather than read from the claims export,
+    which carries no charge column. `meta.injection_log` has no source file at all.
 
     `raw.claims` carries no restatement flag on purpose. Raw holds what the
     source sent; knowing which arrival amended another is the answer key's job,
@@ -61,8 +61,8 @@ def create_tables(con: duckdb.DuckDBPyConnection) -> None:
 def land_arrivals(
     con: duckdb.DuckDBPyConnection,
     *,
-    claims_csv: str,
-    encounters_csv: str,
+    claims_path: str,
+    encounters_path: str,
     start: date,
     end: date,
     seed: int,
@@ -71,8 +71,8 @@ def land_arrivals(
 
     Args:
         con: Connection to land into, already inside the caller's transaction.
-        claims_csv: Path to the Synthea claims export.
-        encounters_csv: Path to the encounters export, which carries the cost
+        claims_path: Path to the Synthea claims export.
+        encounters_path: Path to the encounters export, which carries the cost
             that the claims apportion.
         start: First received date to land, inclusive.
         end: First received date beyond the window, exclusive.
@@ -81,7 +81,7 @@ def land_arrivals(
     Returns:
         The number of claim arrivals landed.
     """
-    _derive_arrivals(con, claims_csv=claims_csv, encounters_csv=encounters_csv, seed=seed)
+    _derive_arrivals(con, claims_path=claims_path, encounters_path=encounters_path, seed=seed)
     _replace_window(con, "raw.claims", CLAIM_COLUMNS, start, end)
     _replace_window(con, "meta.injection_log", LOG_COLUMNS, start, end)
 
@@ -91,7 +91,7 @@ def land_arrivals(
     return counted[0] if counted else 0
 
 
-def _derive_arrivals(con: duckdb.DuckDBPyConnection, *, claims_csv: str, encounters_csv: str, seed: int) -> None:
+def _derive_arrivals(con: duckdb.DuckDBPyConnection, *, claims_path: str, encounters_path: str, seed: int) -> None:
     """Build every arrival for every claim, whichever window it belongs to.
 
     The billing date comes from the export, so no lookback is needed to find a
@@ -117,8 +117,8 @@ def _derive_arrivals(con: duckdb.DuckDBPyConnection, *, claims_csv: str, encount
                 e.PAYER_COVERAGE as encounter_coverage,
                 count(*) over (partition by c.APPOINTMENTID) as claims_for_encounter,
                 row_number() over (partition by c.APPOINTMENTID order by c.Id) as claim_seq
-            from read_csv_auto($claims_path) c
-            join read_csv_auto($encounters_path) e on c.APPOINTMENTID = e.Id
+            from read_parquet($claims_path) c
+            join read_parquet($encounters_path) e on c.APPOINTMENTID = e.Id
         ),
         apportioned as (
             select *,
@@ -170,8 +170,8 @@ def _derive_arrivals(con: duckdb.DuckDBPyConnection, *, claims_csv: str, encount
             "seed": seed,
             "restated_pct": RESTATED_PERCENT,
             "restate_range": MAX_RESTATE_LAG_DAYS,
-            "claims_path": claims_csv,
-            "encounters_path": encounters_csv,
+            "claims_path": claims_path,
+            "encounters_path": encounters_path,
         },
     )
 

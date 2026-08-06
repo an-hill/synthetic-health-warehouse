@@ -7,7 +7,7 @@ deliberately throws that history away and holds only the current state, letting
 the snapshot rediscover the history one window at a time. Most operational
 source systems really do show only current state; the export is the odd one.
 
-What changes is the payer, taken from `payer_transitions.csv`, which is real
+What changes is the payer, taken from the payer transitions export, which is real
 coverage history rather than anything injected. Death is the other.
 """
 
@@ -15,7 +15,7 @@ from datetime import date
 
 import duckdb
 
-# Attributes of `patients.csv` deliberately left out. MARITAL, ADDRESS, CITY,
+# Attributes of the patients export deliberately left out. MARITAL, ADDRESS, CITY,
 # ZIP, INCOME and HEALTHCARE_EXPENSES are current values fixed at generation
 # time, so stamping them onto a row dated years earlier would assert something
 # false, and a date-aware join to dim_patient would return a confidently wrong
@@ -25,7 +25,7 @@ import duckdb
 
 
 def create_tables(con: duckdb.DuckDBPyConnection) -> None:
-    """Create the patient snapshot source, which projects two CSVs rather than mirroring one."""
+    """Create the patient snapshot source, which projects two export files rather than mirroring one."""
     con.execute("""
         create table if not exists raw.patients_current (
             patient_id varchar, birthdate date, gender varchar,
@@ -36,7 +36,7 @@ def create_tables(con: duckdb.DuckDBPyConnection) -> None:
     """)
 
 
-def land_as_of(con: duckdb.DuckDBPyConnection, *, patients_csv: str, transitions_csv: str, as_of: date) -> int:
+def land_as_of(con: duckdb.DuckDBPyConnection, *, patients_path: str, transitions_path: str, as_of: date) -> int:
     """Replace the table with every patient as they stood on `as_of`.
 
     Replaced rather than accumulated, so the table only ever holds one as-of
@@ -45,8 +45,8 @@ def land_as_of(con: duckdb.DuckDBPyConnection, *, patients_csv: str, transitions
 
     Args:
         con: Connection to land into, already inside the caller's transaction.
-        patients_csv: Path to the Synthea patients export.
-        transitions_csv: Path to the payer transitions export, which carries the
+        patients_path: Path to the Synthea patients export.
+        transitions_path: Path to the payer transitions export, which carries the
             coverage history the payer is resolved from.
         as_of: The date attributes are evaluated at, being the window end.
 
@@ -63,19 +63,19 @@ def land_as_of(con: duckdb.DuckDBPyConnection, *, patients_csv: str, transitions
             p.DEATHDATE is not null and p.DEATHDATE <= $as_of as is_deceased,
             case when p.DEATHDATE <= $as_of then p.DEATHDATE end as deceased_date,
             $as_of, now()
-        from read_csv_auto($patients_path) p
+        from read_parquet($patients_path) p
         -- Exactly one transition covers any date a patient is alive for, so this
         -- neither drops a patient nor duplicates one. A patient not yet born is
         -- absent entirely: their first appearance is a new dimension row, and a
         -- death is a change to an existing one rather than a disappearance the
         -- snapshot would have to be configured to notice.
-        left join read_csv_auto($transitions_path) t
+        left join read_parquet($transitions_path) t
           on t.PATIENT = p.Id
          and t.START_DATE::date <= $as_of
          and t.END_DATE::date > $as_of
         where p.BIRTHDATE <= $as_of
         """,
-        {"as_of": as_of, "patients_path": patients_csv, "transitions_path": transitions_csv},
+        {"as_of": as_of, "patients_path": patients_path, "transitions_path": transitions_path},
     )
 
     counted = con.execute("select count(*) from raw.patients_current").fetchone()
