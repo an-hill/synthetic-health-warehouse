@@ -38,6 +38,8 @@ The loader reads the export about twenty times faster this way. The types are th
 
 Converting was verified to change nothing: every table lands identically from either format, compared column by column.
 
+**The sniffer decided the types, and Parquet has frozen them.** It read `ZIP` as text, so the Massachusetts codes keep their leading zero, and the SNOMED and RxNorm codes as integers. No code in this export begins with a zero, so nothing was lost, but a regenerated export carrying one would lose it silently at conversion. Check before trusting a new export: `read_csv_auto` is the only thing standing between the CSV and what everything downstream believes.
+
 ## What is in it
 
 | File | Rows | Grain |

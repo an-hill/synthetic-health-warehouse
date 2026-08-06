@@ -17,10 +17,11 @@ jobs:
         with:
           enable-cache: true
 
-      # A day every raw table lands rows for, so freshness reads a real timestamp
-      # in each rather than passing over a table the window left empty.
+      # Four months rather than a day, so the tests run against 878 encounters
+      # and 1,716 claims instead of 6 and 12. It was a day while the export was
+      # CSV and a wide window was slow.
       - name: Land a window
-        run: uv run python -m loader.land --window-start 2025-11-03 --window-end 2025-11-04
+        run: uv run python -m loader.land --window-start 2025-09-01 --window-end 2026-01-01
 
       # Green here says the sources resolve and name what the loader really
       # wrote. It says nothing about the thresholds: the window landed seconds
@@ -39,3 +40,6 @@ jobs:
             echo "::error::a three-day-old source passed freshness"
             exit 1
           fi
+
+      - name: Build and test the models
+        run: make build

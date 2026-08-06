@@ -1,0 +1,117 @@
+version: 2
+
+models:
+  - name: stg_encounters
+    description: One row per encounter, as landed in the window holding its service date.
+    columns:
+      - name: encounter_id
+        description: Synthea's encounter id, and the key everything else in the window hangs off.
+        data_tests: [unique, not_null]
+      - name: patient_id
+        data_tests: [not_null]
+      - name: encounter_class
+        description: What kind of visit it was, and what makes an inpatient stay findable for the readmission model.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [ambulatory, wellness, outpatient, urgentcare, emergency, inpatient, home, virtual, snf, hospice]
+      - name: encounter_code
+        description: SNOMED CT, carried as text because it is an identifier rather than a quantity.
+        data_tests: [not_null]
+      - name: total_cost
+        description: What the encounter cost in total, which its claims apportion between them.
+        data_tests: [not_null]
+      - name: _service_date
+        description: The date that decided which window this row belongs to.
+        data_tests: [not_null]
+
+  - name: stg_conditions
+    description: One row per condition onset, landed with the encounter that recorded it.
+    columns:
+      - name: encounter_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_encounters')
+                field: encounter_id
+      - name: condition_code
+        description: SNOMED CT, and the code set the condition-grouping seed has to cover.
+        data_tests: [not_null]
+      - name: onset_on
+        description: When the condition started, which can precede its encounter by years.
+
+  - name: stg_medications
+    description: One row per medication order, landed with the encounter that recorded it.
+    columns:
+      - name: encounter_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_encounters')
+                field: encounter_id
+      - name: medication_code
+        description: RxNorm, carried as text for the same reason as the condition codes.
+        data_tests: [not_null]
+
+  - name: stg_claims
+    description: >
+      One row per claim submission, landed in the window holding the date it was
+      billed. A restated claim submits twice under one claim_id with different
+      amounts, so the grain is the submission and collapsing it to one row per
+      claim is fct_claim's job.
+    columns:
+      - name: claim_id
+        description: Shared by a claim's original submission and any restatement of it.
+        data_tests: [not_null]
+      - name: encounter_id
+        description: >
+          The encounter billed for. It can name an encounter this warehouse has
+          never landed, because a claim is windowed on its billing date and the
+          service it bills for may predate the range.
+        data_tests:
+          - not_null
+          # Warns rather than fails: the orphan is the ragged leading edge of a
+          # backfill, which is expected and worth counting, not a defect.
+          - relationships:
+              arguments:
+                to: ref('stg_encounters')
+                field: encounter_id
+              config:
+                severity: warn
+      - name: received_date
+        description: When the claim was billed, which is 0 to 100 days after the service.
+        data_tests: [not_null]
+      - name: billed_amount
+        data_tests: [not_null]
+
+  - name: stg_providers
+    description: One row per clinician, rewritten whole on every run. Synthea's own encounter and procedure counts are left behind, being properties of the generator run.
+    columns:
+      - name: provider_id
+        data_tests: [unique, not_null]
+      - name: zip
+        description: Text, not a number. Every one here is a Massachusetts code beginning with a zero.
+
+  - name: stg_payers
+    description: One row per payer, rewritten whole on every run. Synthea's aggregate cost and coverage statistics are left behind.
+    columns:
+      - name: payer_id
+        data_tests: [unique, not_null]
+      - name: payer_name
+        data_tests: [not_null]
+
+  - name: stg_patients_current
+    description: >
+      One row per patient alive at the window end, holding only the attributes
+      that can honestly be evaluated as of a date. Replaced outright each run,
+      so it shows current state alone and a snapshot has something to observe.
+    columns:
+      - name: patient_id
+        data_tests: [unique, not_null]
+      - name: birthdate
+        data_tests: [not_null]
+      - name: _as_of_date
+        description: The window end this row was resolved at, the same for every row in the table.
+        data_tests: [not_null]

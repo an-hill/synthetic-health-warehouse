@@ -8,7 +8,7 @@ RUN := $(UV) run
 DBT_WAREHOUSE_PATH ?= $(CURDIR)/warehouse.duckdb
 export DBT_WAREHOUSE_PATH
 
-.PHONY: help test format lint lint-fix typecheck freshness check-all
+.PHONY: help test format lint lint-fix typecheck freshness build check-all
 .DEFAULT_GOAL := help
 
 help:  ## Show available targets
@@ -33,9 +33,12 @@ lint:  ## Check style and formatting
 typecheck:  ## Run ty
 	$(RUN) ty check
 
-# Out of check-all deliberately: this needs a loaded warehouse and the dbt group,
+# Out of check-all deliberately: these need a loaded warehouse and the dbt group,
 # and check-all has to keep running without either.
 freshness:  ## Check how recently the loader last wrote each raw table
 	$(RUN) --group dbt dbt source freshness --project-dir transform --profiles-dir transform
+
+build:  ## Build the models and run their tests
+	$(RUN) --group dbt dbt build --project-dir transform --profiles-dir transform
 
 check-all: lint typecheck test  ## Lint, typecheck, and tests, in the order they fail fastest
