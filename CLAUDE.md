@@ -6,20 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 An analytics pipeline over synthetic patient data, built to gain working experience with dbt and Airflow. The domain is chosen for its awkwardness: claims arrive late, records get restated, and patient attributes change. Those problems are what make incremental models, snapshots, and idempotent backfills necessary rather than decorative.
 
-`plan.md` is the specification: scope, checklist, schedule, and open decisions. **Read it before writing code.** It is self-contained, so do not restate it here or in the README.
-
-**Add structure when the code needs it, not before.** Directories, CI jobs, and README sections arrive with the work that requires them. Anything below is here because it exists today; everything still to come belongs in `plan.md` until it does.
-
-## The loader is the answer key
-
-`src/loader/` injects every distortion the warehouse is built to handle, and writes the injection log recording what it injected. Two consequences:
-
-- **Nothing downstream may infer a distortion the log does not record.** A test that reconciles against the log is checking the pipeline; a test that recomputes the distortion is checking itself.
-- **The loader gets its own `pytest` tests, and they come first.** An answer key that is wrong invalidates every result derived from it.
-
-The two categories in the log are checked differently, and conflating them defeats the point. Late arrival and restatement are **absorbed silently**: verified by totals reconciling, not by a test firing. A visit ending before it starts, or a drug exposure before date of birth, is **rejected loudly**: verified by a named test failing when it is present.
-
-`plan.md` §5 asks for the first version to be written append-only, so that re-running a day double-counts before it is fixed. That is deliberate. Do not skip ahead to the idempotent version.
+**Add structure when the code needs it, not before.** Directories, CI jobs, and README sections arrive with the work that requires them. Anything below is here because it exists today.
 
 ## Commands
 
@@ -70,7 +57,7 @@ A comment earns its place by recording a decision a reader could not reach alone
 - Do not elaborate. The reason earns a sentence; the mechanism behind the reason almost never does.
 - Do not record status. "No models yet" is true when written, wrong within a week, and nobody updates it.
 - Do not comment an absence. Either give the reason or delete the line.
-- If the rationale is longer than the config it explains, it belongs in `plan.md` or in your reply, not the file.
+- If the rationale is longer than the config it explains, it belongs in your reply, not the file.
 
 In dbt, a model's `description` in its YAML is the documentation and ships in `dbt docs`; a SQL comment is for the reader of the query alone. Grain, and the reasoning behind a lookback window or a materialisation, belong in the description.
 

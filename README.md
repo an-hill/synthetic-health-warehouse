@@ -2,8 +2,6 @@
 
 An analytics pipeline over synthetic patient data, built to work through dbt and Airflow on problems that make their features necessary rather than decorative: claims that arrive weeks after the encounter they bill for, records that get restated, and patient attributes that change over time.
 
-**Status: pre-implementation.** The scaffolding is here; nothing is built yet. `plan.md` is the specification.
-
 ## The shape of it
 
 ```
