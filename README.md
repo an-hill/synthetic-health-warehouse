@@ -51,6 +51,16 @@ The one distortion the export lacks is restatement: it contains no `ADJUSTMENT` 
 
 One consequence worth expecting: the leading edge of a backfill is ragged, because claims billed then may be for services that predate the range and were never landed.
 
+### A source that mutates, so a snapshot has something to observe
+
+`raw.patients_current` holds every patient as they stood at the **window end**, replaced outright on every run. It exists because a dbt snapshot detects change by comparing a source against what it saw last time, and Synthea hands over history directly: dated rows in a file that never changes. The table throws that history away so the snapshot can rediscover it one window at a time, which is what most operational source systems look like anyway.
+
+What changes is the payer, resolved from `payer_transitions.csv`, which is the export's own coverage history rather than anything injected. Landing the window ending 2025-11-01 and then the one ending 2025-12-01 moves four patients: Medicaid to Cigna, Humana to Medicare, Cigna to Aetna, and Medicare to uninsured. Death is the other change, and a deceased patient stays in the table with a flag set, so the snapshot sees a change rather than a row vanishing.
+
+It deliberately carries only attributes that can be evaluated as of a date. Marital status, address, income and healthcare expenses are current values fixed at generation time, so stamping them onto a row dated years earlier would assert something false and make any date-aware join to `dim_patient` confidently wrong. Age is left out for a different reason: it is derivable from the birthdate and the date being asked about, and versioning it would add a dimension row per patient per year, burying the changes that matter.
+
+**The snapshot has to run per window.** Because the table is replaced rather than accumulated, it only ever holds the latest as-of date. A backfill that runs the loader sixty times and `dbt snapshot` once at the end captures one state and loses the other fifty-nine.
+
 ### What backs this up, and how that differs from production
 
 Nothing backs up `warehouse.duckdb`, because it is derived rather than authoritative. The committed CSVs and the loader reproduce any window on demand, so recovery means re-running the loader, not restoring a file. Reverting the code is git's job and the data follows from it.
