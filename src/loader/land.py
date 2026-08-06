@@ -66,7 +66,7 @@ def land_window(
             [_csv(source, "encounters"), start, end],
         )
 
-        rows = {name: _land(con, source, name) for name in WINDOWED_TABLES}
+        rows = {name: _land(con, source, name, start, end) for name in WINDOWED_TABLES}
         rows["providers"] = _land_providers(con, source)
 
     return LoadReport(window_start=start, window_end=end, rows=rows)
@@ -89,9 +89,18 @@ def _create_tables(con: duckdb.DuckDBPyConnection, source: Path) -> None:
         )
 
 
-def _land(con: duckdb.DuckDBPyConnection, source: Path, name: str) -> int:
-    """Land one windowed table, joining it to the window on the key that partitions it."""
+def _land(con: duckdb.DuckDBPyConnection, source: Path, name: str, start: date, end: date) -> int:
+    """Land one windowed table, replacing whatever the window already held.
+
+    The delete is what makes a backfill idempotent. It spans the window rather
+    than matching a window identifier, so re-landing one day inside a month that
+    was already loaded removes that day alone.
+    """
     key = "Id" if name == "encounters" else "ENCOUNTER"
+    con.execute(
+        f"delete from raw.{name} where _service_date >= ? and _service_date < ?",
+        [start, end],
+    )
     con.execute(
         f"""
         insert into raw.{name}

@@ -29,6 +29,16 @@ Pinned deliberately. Airflow 3 changed scheduling semantics and `catchup` defaul
 
 Python and the three data versions are locked in `uv.lock`. The Airflow and Cosmos rows are filled in when the Astro Runtime image is chosen, since the image decides them.
 
+## Loading
+
+The loader lands one half-open date window into `warehouse.duckdb`, so that adjacent windows tile the way an Airflow data interval does:
+
+```sh
+uv run python -m loader.land --window-start 2025-11-03 --window-end 2025-11-04
+```
+
+Re-running a window replaces it rather than adding to it, so a backfill can be repeated, and a window can be re-landed inside a larger one that was already loaded, without double-counting.
+
 ## Development
 
 ```sh

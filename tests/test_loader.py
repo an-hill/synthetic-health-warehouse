@@ -13,6 +13,7 @@ import pytest
 from loader.land import land_window
 
 SOURCE = Path("data")
+TABLES = ("encounters", "conditions", "medications", "providers")
 
 # Every day of 2025 carries encounters, so a single day is a real window rather
 # than an empty one.
@@ -68,6 +69,17 @@ def test_child_service_date_is_the_parents_not_its_own(database: Path) -> None:
     for table in ("conditions", "medications"):
         dates = landed(database, f"select distinct _service_date from raw.{table}")
         assert dates == [(DAY,)], f"{table} was partitioned on something other than the service date"
+
+
+def test_loading_the_same_window_twice_changes_nothing(database: Path) -> None:
+    """_loaded_at is wall-clock and moves by design, so it is excluded rather than compared."""
+    land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
+    before = {t: landed(database, f"select * exclude (_loaded_at) from raw.{t} order by all") for t in TABLES}
+
+    land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
+    after = {t: landed(database, f"select * exclude (_loaded_at) from raw.{t} order by all") for t in TABLES}
+
+    assert before == after
 
 
 def test_adjacent_windows_tile_into_the_combined_window(database: Path, tmp_path: Path) -> None:
