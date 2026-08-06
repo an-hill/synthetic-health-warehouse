@@ -29,6 +29,26 @@ Pinned deliberately. Airflow 3 changed scheduling semantics and `catchup` defaul
 
 Python and the three data versions are locked in `uv.lock`. The Airflow and Cosmos rows are filled in when the Astro Runtime image is chosen, since the image decides them.
 
+## Loading
+
+The loader lands one half-open date window into `warehouse.duckdb`, so that adjacent windows tile the way an Airflow data interval does:
+
+```sh
+uv run python -m loader.land --window-start 2025-11-03 --window-end 2025-11-04
+```
+
+Re-running a window replaces it rather than adding to it, so a backfill can be repeated, and a window can be re-landed inside a larger one that was already loaded, without double-counting. Replacing a window means deleting it first, and the whole window is one transaction so that a load killed partway leaves it as it was rather than emptying it.
+
+### What backs this up, and how that differs from production
+
+Nothing backs up `warehouse.duckdb`, because it is derived rather than authoritative. The committed CSVs and the loader reproduce any window on demand, so recovery means re-running the loader, not restoring a file. Reverting the code is git's job and the data follows from it.
+
+That works here for a reason that does not hold in production: **the source is immutable and complete**. Every record already exists in `data/`, and the window is the pretence that it does not. Re-landing last March in a year's time returns exactly what it returns today.
+
+A real source accumulates and mutates, so re-reading a past window can legitimately return something different, or nothing at all if the source has aged the records out. Once that is true, the raw layer holds the only copy of what arrived and stops being reproducible. The usual answer is an immutable landing zone, with extracts written once to object storage and never rewritten, and the warehouse loaded from those files rather than from the source. The committed CSVs are that landing zone in miniature, which is the only reason this project can get away with no backups at all.
+
+Two smaller differences worth naming. A single DuckDB file has no point-in-time recovery, so the transaction guarantees a window is never half-written but nothing lets you read the warehouse as it stood an hour ago. And the loader manufactures the late arrivals and restatements that a real extract would merely observe.
+
 ## Development
 
 ```sh

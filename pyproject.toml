@@ -65,9 +65,13 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-# Tests assert, and pytest fixtures are frequently declared but not referenced
-# in the body.
-"tests/**" = ["S101", "ARG"]
+# S608: a table name cannot be bound as a SQL parameter, so it is interpolated.
+# Everything interpolated here is a module constant; paths and window bounds are
+# bound.
+"src/loader/land.py" = ["S608"]
+# Tests assert, pytest fixtures are frequently declared but not referenced in the
+# body, and they interpolate table names for the same reason as the loader.
+"tests/**" = ["S101", "ARG", "S608"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
