@@ -22,18 +22,34 @@ java -jar synthea-with-dependencies.jar \
 
 Left at their defaults: `exporter.years_of_history` (10) and `generate.only_alive_patients` (false). State defaults to Massachusetts, so every provider is a Massachusetts one.
 
+## Converted to Parquet
+
+Synthea emits CSV. The files committed here are that CSV converted once, with DuckDB 1.5.5:
+
+```sh
+uv run python -c "
+import duckdb
+for name in ('patients', 'encounters', 'conditions', 'medications', 'providers', 'claims', 'payer_transitions', 'payers'):
+    duckdb.execute(f\"copy (select * from read_csv_auto('{name}.csv')) to '{name}.parquet' (format parquet, compression zstd)\")
+"
+```
+
+The loader reads the export about twenty times faster this way. The types are the ones `read_csv_auto` inferred, now recorded in the file rather than re-sniffed on every read, which is what removes the schema detection cost entirely.
+
+Converting was verified to change nothing: every table lands identically from either format, compared column by column.
+
 ## What is in it
 
 | File | Rows | Grain |
 |---|---|---|
-| `patients.csv` | 554 | One per patient |
-| `encounters.csv` | 31,824 | One per encounter |
-| `conditions.csv` | 19,993 | One per condition onset, 1.58 per encounter on average and up to 11 |
-| `medications.csv` | 29,004 | One per medication order, 2.02 per encounter on average |
-| `providers.csv` | 650 | One per clinician, of which 587 appear in `encounters` |
-| `claims.csv` | 60,828 | One per claim, linked to its encounter by `APPOINTMENTID` |
-| `payer_transitions.csv` | 20,693 | One per coverage period, 37.7 per patient |
-| `payers.csv` | 10 | One per payer |
+| `patients.parquet` | 554 | One per patient |
+| `encounters.parquet` | 31,824 | One per encounter |
+| `conditions.parquet` | 19,993 | One per condition onset, 1.58 per encounter on average and up to 11 |
+| `medications.parquet` | 29,004 | One per medication order, 2.02 per encounter on average |
+| `providers.parquet` | 650 | One per clinician, of which 587 appear in `encounters` |
+| `claims.parquet` | 60,828 | One per claim, linked to its encounter by `APPOINTMENTID` |
+| `payer_transitions.parquet` | 20,693 | One per coverage period, 37.7 per patient |
+| `payers.parquet` | 10 | One per payer |
 
 554 patients rather than 500 because `-p` counts the living: the 54 with a `DEATHDATE` are exported on top of it.
 
@@ -49,6 +65,6 @@ Claims fan out over encounters at 1.91 apiece, from 1 to 8, and the heavier clas
 
 The export contains no `ADJUSTMENT` transactions, so no claim ever re-arrives amended. Restatement is the one distortion the loader injects, and the only thing `meta.injection_log` records.
 
-`payer_transitions.csv` is real insurance history, with `START_DATE` and `END_DATE` timestamps rather than the years the upstream data dictionary describes, and periods beginning on each patient's own anniversary rather than on 1 January. Only 1,565 of the 20,693 rows are an actual change of payer; the rest are renewals with the same one. Around 41 changes fall in 2025, spread over every month.
+`payer_transitions.parquet` is real insurance history, with `START_DATE` and `END_DATE` timestamps rather than the years the upstream data dictionary describes, and periods beginning on each patient's own anniversary rather than on 1 January. Only 1,565 of the 20,693 rows are an actual change of payer; the rest are renewals with the same one. Around 41 changes fall in 2025, spread over every month.
 
 Coverage resolves cleanly: on any date a patient is alive, exactly one period covers them, with no gaps and no overlaps. The exception is the end of the data, where the simulation stops renewing: 3 living patients are uncovered by 2025-12-31 and 8 by 2026-01-01. That is a trailing edge to keep as-of dates inside, and the counterpart to the ragged leading edge of a claims backfill.

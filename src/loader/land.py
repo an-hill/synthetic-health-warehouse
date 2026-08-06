@@ -54,7 +54,7 @@ def land_window(
         end: First date beyond the window, exclusive, so that adjacent windows
             tile without overlap or gap.
         database: DuckDB file to land into, created if absent.
-        source: Directory holding the Synthea CSV export.
+        source: Directory holding the committed Synthea export.
         seed: Salts the injected claim restatements. Fixed by default, because
             a repeated backfill has to be identical.
 
@@ -74,16 +74,16 @@ def land_window(
         claims.create_tables(con)
         patients.create_tables(con)
 
-        # Every column, not just the key, so that landing the encounters
-        # themselves is a copy out of this table rather than a second scan of
-        # the file it was just built from.
+        # The key and the date alone. Selecting every column would make this
+        # table as wide as its source, which costs nothing here and is the wrong
+        # habit to carry to a source where it would.
         con.execute(
             """
             create or replace temp table window_encounters as
-            select *, START::date as _service_date
-            from read_csv_auto(?) where START::date >= ? and START::date < ?
+            select Id, START::date as _service_date
+            from read_parquet(?) where START::date >= ? and START::date < ?
             """,
-            [_csv(source, "encounters"), start, end],
+            [_export(source, "encounters"), start, end],
         )
 
         # One transaction for the whole window. Each table is deleted before it
@@ -95,16 +95,16 @@ def land_window(
         rows |= {name: _land_whole(con, source, name) for name in FULL_REPLACE_TABLES}
         rows["claims"] = claims.land_arrivals(
             con,
-            claims_csv=_csv(source, "claims"),
-            encounters_csv=_csv(source, "encounters"),
+            claims_path=_export(source, "claims"),
+            encounters_path=_export(source, "encounters"),
             start=start,
             end=end,
             seed=seed,
         )
         rows["patients_current"] = patients.land_as_of(
             con,
-            patients_csv=_csv(source, "patients"),
-            transitions_csv=_csv(source, "payer_transitions"),
+            patients_path=_export(source, "patients"),
+            transitions_path=_export(source, "payer_transitions"),
             as_of=end,
         )
         con.execute("commit")
@@ -112,31 +112,20 @@ def land_window(
     return LoadReport(window_start=start, window_end=end, rows=rows)
 
 
-def _csv(source: Path, name: str) -> str:
-    return str(source / f"{name}.csv")
+def _export(source: Path, name: str) -> str:
+    return str(source / f"{name}.parquet")
 
 
 def _create_source_tables(con: duckdb.DuckDBPyConnection, source: Path) -> None:
-    """Create each raw table that mirrors a CSV, taking its columns and types from the file.
-
-    Tables already present are skipped rather than left to `if not exists`, which
-    still binds its select and so re-sniffs every CSV on every run to describe
-    tables it then declines to touch.
-    """
-    existing = {
-        row[0]
-        for row in con.execute("select table_name from information_schema.tables where table_schema = 'raw'").fetchall()
-    }
+    """Create each raw table that mirrors an export file, taking its columns and types from it."""
     for name in WINDOWED_TABLES:
-        if name in existing:
-            continue
         con.execute(
             f"""
-            create table raw.{name} as
+            create table if not exists raw.{name} as
             select *, now() as _loaded_at, null::date as _service_date
-            from read_csv_auto(?) limit 0
+            from read_parquet(?) limit 0
             """,
-            [_csv(source, name)],
+            [_export(source, name)],
         )
 
 
@@ -147,24 +136,19 @@ def _land(con: duckdb.DuckDBPyConnection, source: Path, name: str, start: date, 
     than matching a window identifier, so re-landing one day inside a month that
     was already loaded removes that day alone.
     """
+    key = "Id" if name == "encounters" else "ENCOUNTER"
     con.execute(
         f"delete from raw.{name} where _service_date >= ? and _service_date < ?",
         [start, end],
     )
-    if name == "encounters":
-        con.execute("""
-            insert into raw.encounters
-            select * exclude (_service_date), now(), _service_date from window_encounters
-        """)
-    else:
-        con.execute(
-            f"""
-            insert into raw.{name}
-            select s.*, now(), w._service_date
-            from read_csv_auto(?) s join window_encounters w on s.ENCOUNTER = w.Id
-            """,
-            [_csv(source, name)],
-        )
+    con.execute(
+        f"""
+        insert into raw.{name}
+        select s.*, now(), w._service_date
+        from read_parquet(?) s join window_encounters w on s.{key} = w.Id
+        """,
+        [_export(source, name)],
+    )
     return _rowcount(con)
 
 
@@ -173,9 +157,9 @@ def _land_whole(con: duckdb.DuckDBPyConnection, source: Path, name: str) -> int:
     con.execute(
         f"""
         create or replace table raw.{name} as
-        select *, now() as _loaded_at from read_csv_auto(?)
+        select *, now() as _loaded_at from read_parquet(?)
         """,
-        [_csv(source, name)],
+        [_export(source, name)],
     )
     return _rowcount(con)
 
