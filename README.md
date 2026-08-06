@@ -71,6 +71,18 @@ A real source accumulates and mutates, so re-reading a past window can legitimat
 
 Two smaller differences worth naming. A single DuckDB file has no point-in-time recovery, so the transaction guarantees a window is never half-written but nothing lets you read the warehouse as it stood an hour ago. And the loader manufactures restatements that a real extract would merely observe, because the export has none; the late arrivals, by contrast, are the export's own.
 
+## What of this would survive in a real pipeline
+
+Worth knowing before reading the loader, because the split does not run file by file. It runs through the middle of each one.
+
+**Transfers unchanged.** The windowing contract, `land_window(start, end)` over a half-open interval, is exactly how a real extract task is parameterised from a scheduler's data interval. Delete-on-a-partition-predicate then insert, all inside one transaction, is the idempotency and atomicity pattern a real warehouse needs, differing only in dialect: `MERGE`, `INSERT OVERWRITE PARTITION`, a partition swap. Deciding *which* date a row belongs to, a condition by its parent encounter's service date and a claim by its billing date rather than its service date, is a real decision that quietly breaks incremental models when it is wrong. `_loaded_at` is ordinary ingestion metadata. Most of the tests, too: idempotency, atomicity under a killed load, and adjacent windows tiling are what an extract layer should be checked for anywhere.
+
+**Would be deleted.** The restatement injection and `meta.injection_log`, which exist because the export contains no amendments and a merge would otherwise have nothing to collapse. Apportioning the encounter's cost across its claims, which is only needed because the 216 MB transactions file holding the real charges was left out. And `patients_current`'s as-of resolution, since a production source system already shows only current state and needs no help being flattened.
+
+**Would be replaced.** Eight lines. Every `read_csv_auto` call is the seam where a real source connector goes, and nothing around them changes.
+
+That makes the loader the most scaffolding-heavy part of the project, and it is now finished. The layers that follow are closer to shippable: the staging and mart models are the SQL anyone would write, `fct_claim`'s incremental merge and lookback are a production pattern with the lookback genuinely estimated from an observed distribution, and the Airflow DAG with its retries, pool, and backfill is orchestration as it would really be configured. What the loader buys is that those layers meet real problems — late arrival, fan-out, a mutating dimension — rather than clean data where `merge` and `catchup` would be decorative.
+
 ## Development
 
 ```sh
