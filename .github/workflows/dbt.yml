@@ -1,0 +1,41 @@
+name: dbt
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  sources:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to commit SHAs for the reason given in python-checks.yml.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      # A day every raw table lands rows for, so freshness reads a real timestamp
+      # in each rather than passing over a table the window left empty.
+      - name: Land a window
+        run: uv run python -m loader.land --window-start 2025-11-03 --window-end 2025-11-04
+
+      # Green here says the sources resolve and name what the loader really
+      # wrote. It says nothing about the thresholds: the window landed seconds
+      # ago, so 24 hours cannot be approached, let alone crossed.
+      - name: Sources resolve against a landed window
+        run: make freshness
+
+      # Which is why the threshold is watched failing, against a copy aged past
+      # it. A freshness block deleted, or an error_after mistyped in days, would
+      # otherwise leave this workflow green.
+      - name: A stale source fails the build
+        run: |
+          cp warehouse.duckdb aged.duckdb
+          uv run python -c "import duckdb; con = duckdb.connect('$PWD/aged.duckdb'); con.execute('update raw.encounters set _loaded_at = _loaded_at - interval 3 days'); con.close()"
+          if DBT_WAREHOUSE_PATH="$PWD/aged.duckdb" make freshness; then
+            echo "::error::a three-day-old source passed freshness"
+            exit 1
+          fi

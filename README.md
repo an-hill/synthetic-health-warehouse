@@ -71,6 +71,18 @@ A real source accumulates and mutates, so re-reading a past window can legitimat
 
 Two smaller differences worth naming. A single DuckDB file has no point-in-time recovery, so the transaction guarantees a window is never half-written but nothing lets you read the warehouse as it stood an hour ago. And the loader manufactures restatements that a real extract would merely observe, because the export has none; the late arrivals, by contrast, are the export's own.
 
+## Transforming
+
+The dbt project is in `transform/`. Nothing is modelled yet: what exists is the source layer over the seven raw tables and the freshness check that guards them.
+
+```sh
+make freshness
+```
+
+**Freshness here measures the loader, not the data.** `_loaded_at` is wall-clock at the moment a row lands, so it answers whether the extract ran rather than whether the records are recent: backfilling a window from 2015 stamps every row with now and reports green. That is what makes it worth running as a precondition on the build rather than as a report after it. The thresholds warn at 24 hours and error at 48, so one missed daily run warns and two error.
+
+One reading to expect. On the windowed tables freshness reports the last window that landed rows, not the last run, because the loader replaces a window rather than touching every row. `providers`, `payers`, and `patients_current` are rewritten whole each run, so they always read as current.
+
 ## What of this would survive in a real pipeline
 
 Worth knowing before reading the loader, because the split does not run file by file. It runs through the middle of each one.
