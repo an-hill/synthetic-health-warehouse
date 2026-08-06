@@ -1,0 +1,15 @@
+health_warehouse:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      # dbt resolves a relative path against the directory dbt was invoked from,
+      # not against --project-dir, and DuckDB creates whatever it is handed, so
+      # a wrong one produces an empty database rather than an error. The default
+      # matches the loader's, meaning the repository root; the Makefile and
+      # Airflow both set the variable absolutely so it never depends on cwd.
+      path: "{{ env_var('DBT_WAREHOUSE_PATH', 'warehouse.duckdb') }}"
+      # DuckDB's single-writer constraint is between processes, not within one,
+      # so dbt's own threads are safe. It is separate dbt processes under Airflow
+      # that need the pool of 1.
+      threads: 4

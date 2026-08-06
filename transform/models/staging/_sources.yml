@@ -1,0 +1,43 @@
+version: 2
+
+sources:
+  - name: raw
+    description: What the loader landed, one date window at a time.
+    loaded_at_field: _loaded_at
+    # The loader runs daily, so one missed run warns and two error.
+    freshness:
+      warn_after: {count: 24, period: hour}
+      error_after: {count: 48, period: hour}
+    tables:
+      - name: encounters
+        description: One row per encounter, landed in the window holding its service date.
+
+      - name: conditions
+        description: >
+          One row per condition onset, landed with the encounter that recorded
+          it rather than on its own START, which can run years later.
+
+      - name: medications
+        description: >
+          One row per medication order, landed with the encounter that recorded
+          it rather than on its own START.
+
+      - name: claims
+        description: >
+          One row per claim submission, landed in the window holding the date it
+          was billed, which is 0 to 100 days after the service. A restated claim
+          submits twice under one claim_id, so this is an append log rather than
+          one row per claim, and collapsing it is fct_claim's job.
+
+      - name: providers
+        description: One row per clinician, rewritten whole on every run.
+
+      - name: payers
+        description: One row per payer, rewritten whole on every run.
+
+      - name: patients_current
+        description: >
+          One row per patient alive at the window end, holding the attributes
+          that can honestly be evaluated as of a date and rewritten whole on
+          every run. It shows current state alone so that a snapshot has a
+          mutating source to observe.

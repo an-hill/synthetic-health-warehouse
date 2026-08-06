@@ -2,8 +2,13 @@
 
 UV ?= uv
 RUN := $(UV) run
+# Absolute because dbt resolves a relative path against the directory dbt was
+# invoked from, and DuckDB silently creates whatever file that lands on.
+# Overridable so a check can point at a copy rather than the real warehouse.
+DBT_WAREHOUSE_PATH ?= $(CURDIR)/warehouse.duckdb
+export DBT_WAREHOUSE_PATH
 
-.PHONY: help test format lint lint-fix typecheck check-all
+.PHONY: help test format lint lint-fix typecheck freshness check-all
 .DEFAULT_GOAL := help
 
 help:  ## Show available targets
@@ -28,4 +33,9 @@ lint:  ## Check style and formatting
 typecheck:  ## Run ty
 	$(RUN) ty check
 
-check-all: lint typecheck test  ## Everything CI runs, in the order it fails fastest
+# Out of check-all deliberately: this needs a loaded warehouse and the dbt group,
+# and check-all has to keep running without either.
+freshness:  ## Check how recently the loader last wrote each raw table
+	$(RUN) --group dbt dbt source freshness --project-dir transform --profiles-dir transform
+
+check-all: lint typecheck test  ## Lint, typecheck, and tests, in the order they fail fastest

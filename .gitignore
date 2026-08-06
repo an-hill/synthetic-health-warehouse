@@ -34,6 +34,9 @@ target/
 dbt_packages/
 logs/
 
+# dbt writes an anonymous user id into the project directory on first run.
+.user.yml
+
 # Astronomer CLI state. `airflow_settings.yaml` carries connections and
 # variables, so it holds credentials the moment it stops being local-only.
 .astro/
