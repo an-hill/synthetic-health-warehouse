@@ -8,7 +8,7 @@ from typing import cast
 
 import duckdb
 
-from loader import claims
+from loader import claims, patients
 
 DEFAULT_DATABASE = Path("warehouse.duckdb")
 DEFAULT_SOURCE = Path("data")
@@ -19,6 +19,11 @@ DEFAULT_SOURCE = Path("data")
 # encounters serviced in it and everything recorded at them.
 CHILD_TABLES = ("conditions", "medications")
 WINDOWED_TABLES = ("encounters", *CHILD_TABLES)
+
+# Small static dimensions, rewritten whole on every run so that landing one
+# window is self-contained. Idempotent by construction, unlike the windowed
+# tables, which had to be made so.
+FULL_REPLACE_TABLES = ("providers", "payers")
 
 
 @dataclass(frozen=True)
@@ -67,6 +72,7 @@ def land_window(
         con.execute("create schema if not exists meta")
         _create_source_tables(con, source)
         claims.create_tables(con)
+        patients.create_tables(con)
 
         con.execute(
             """
@@ -83,7 +89,7 @@ def land_window(
         # that dbt would happily build clean models over.
         con.execute("begin transaction")
         rows = {name: _land(con, source, name, start, end) for name in WINDOWED_TABLES}
-        rows["providers"] = _land_providers(con, source)
+        rows |= {name: _land_whole(con, source, name) for name in FULL_REPLACE_TABLES}
         rows["claims"] = claims.land_arrivals(
             con,
             claims_csv=_csv(source, "claims"),
@@ -91,6 +97,12 @@ def land_window(
             start=start,
             end=end,
             seed=seed,
+        )
+        rows["patients_current"] = patients.land_as_of(
+            con,
+            patients_csv=_csv(source, "patients"),
+            transitions_csv=_csv(source, "payer_transitions"),
+            as_of=end,
         )
         con.execute("commit")
 
@@ -137,14 +149,14 @@ def _land(con: duckdb.DuckDBPyConnection, source: Path, name: str, start: date, 
     return _rowcount(con)
 
 
-def _land_providers(con: duckdb.DuckDBPyConnection, source: Path) -> int:
-    """Replace the whole provider dimension, so that landing one window is self-contained."""
+def _land_whole(con: duckdb.DuckDBPyConnection, source: Path, name: str) -> int:
+    """Replace a static dimension outright, taking its columns from the file."""
     con.execute(
-        """
-        create or replace table raw.providers as
+        f"""
+        create or replace table raw.{name} as
         select *, now() as _loaded_at from read_csv_auto(?)
         """,
-        [_csv(source, "providers")],
+        [_csv(source, name)],
     )
     return _rowcount(con)
 
@@ -164,7 +176,7 @@ def main() -> None:
     report = land_window(args.window_start, args.window_end)
     print(f"{report.window_start} to {report.window_end}")
     for name, count in report.rows.items():
-        print(f"  {name:<12} {count:>7,}")
+        print(f"  {name:<17} {count:>7,}")
 
 
 if __name__ == "__main__":

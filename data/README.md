@@ -10,7 +10,7 @@ Release `master-branch-latest` of [`synthea-with-dependencies.jar`](https://gith
 java -jar synthea-with-dependencies.jar \
   -p 500 -s 1 -cs 1 -r 20260101 -e 20260101 \
   --exporter.csv.export=true \
-  --exporter.csv.included_files=patients.csv,encounters.csv,conditions.csv,medications.csv,providers.csv,claims.csv \
+  --exporter.csv.included_files=patients.csv,encounters.csv,conditions.csv,medications.csv,providers.csv,claims.csv,payer_transitions.csv,payers.csv \
   --exporter.baseDirectory=./output
 ```
 
@@ -32,6 +32,8 @@ Left at their defaults: `exporter.years_of_history` (10) and `generate.only_aliv
 | `medications.csv` | 29,004 | One per medication order, 2.02 per encounter on average |
 | `providers.csv` | 650 | One per clinician, of which 587 appear in `encounters` |
 | `claims.csv` | 60,828 | One per claim, linked to its encounter by `APPOINTMENTID` |
+| `payer_transitions.csv` | 20,693 | One per coverage period, 37.7 per patient |
+| `payers.csv` | 10 | One per payer |
 
 554 patients rather than 500 because `-p` counts the living: the 54 with a `DEATHDATE` are exported on top of it.
 
@@ -46,3 +48,7 @@ Claims fan out over encounters at 1.91 apiece, from 1 to 8, and the heavier clas
 `LASTBILLEDDATE1` is a real billing date, distinct from `SERVICEDATE` and populated on every row. The lag between them is right-skewed the way a real one is: mean 0.77 days, median 0, 95th percentile 6, and a tail out to 100. All the claims for one encounter share a billing date, so a visit is always billed as a unit.
 
 The export contains no `ADJUSTMENT` transactions, so no claim ever re-arrives amended. Restatement is the one distortion the loader injects, and the only thing `meta.injection_log` records.
+
+`payer_transitions.csv` is real insurance history, with `START_DATE` and `END_DATE` timestamps rather than the years the upstream data dictionary describes, and periods beginning on each patient's own anniversary rather than on 1 January. Only 1,565 of the 20,693 rows are an actual change of payer; the rest are renewals with the same one. Around 41 changes fall in 2025, spread over every month.
+
+Coverage resolves cleanly: on any date a patient is alive, exactly one period covers them, with no gaps and no overlaps. The exception is the end of the data, where the simulation stops renewing: 3 living patients are uncovered by 2025-12-31 and 8 by 2026-01-01. That is a trailing edge to keep as-of dates inside, and the counterpart to the ragged leading edge of a claims backfill.

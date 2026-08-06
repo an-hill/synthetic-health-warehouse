@@ -4,7 +4,7 @@ Expectations are computed against the committed CSVs with an independent query
 rather than hardcoded, so regenerating the export cannot silently rot them.
 """
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import duckdb
@@ -15,12 +15,33 @@ from loader import land as land_module
 from loader.land import land_window
 
 SOURCE = Path("data")
-TABLES = ("raw.encounters", "raw.conditions", "raw.medications", "raw.providers", "raw.claims", "meta.injection_log")
+TABLES = (
+    "raw.encounters",
+    "raw.conditions",
+    "raw.medications",
+    "raw.providers",
+    "raw.payers",
+    "raw.claims",
+    "raw.patients_current",
+    "meta.injection_log",
+)
 
 # Wide enough to hold a useful number of billed claims and their restatements.
 # An encounter's claims all share one billing date, so they always land together
 # and never need a settling period to be complete.
 CLAIM_WINDOW = (date(2025, 9, 1), date(2026, 1, 1))
+
+# Payer coverage is complete through 2025-12-01 and thins after it, as the
+# simulation stops renewing towards its end date. Both as-of dates sit inside
+# the covered region so that a change means a real switch, not a record running
+# out.
+AS_OF_EARLIER = date(2025, 11, 1)
+AS_OF_LATER = date(2025, 12, 1)
+
+# Mid-history, where 38 patients have died and 16 have yet to. Every death in
+# the export precedes the recent windows, so only a date like this can tell a
+# death recorded on time from one recorded early.
+AS_OF_MIDLIFE = date(2020, 1, 1)
 
 # Every day of 2025 carries encounters, so a single day is a real window rather
 # than an empty one.
@@ -328,3 +349,99 @@ def test_the_injection_log_accounts_for_every_landed_claim(database: Path) -> No
         claims = landed(database, f"select {measure} from raw.claims")
         log = landed(database, f"select {measure.replace('billed_amount', 'amount_after')} from meta.injection_log")
         assert claims == log, measure
+
+
+def landed_as_of(database: Path, as_of: date, source: Path = SOURCE) -> None:
+    """Land the window ending on `as_of`, so patients_current is evaluated there."""
+    land_window(as_of - timedelta(days=1), as_of, database=database, source=source)
+
+
+def test_every_patient_alive_at_the_window_end_appears_once(database: Path) -> None:
+    landed_as_of(database, AS_OF_LATER)
+
+    [(rows, distinct, as_of)] = landed(
+        database, "select count(*), count(distinct patient_id), max(_as_of_date) from raw.patients_current"
+    )
+    assert rows == distinct, "a patient resolved to more than one row"
+    assert as_of == AS_OF_LATER
+    assert rows > 0
+
+
+def test_a_patient_resolves_to_exactly_one_payer(database: Path) -> None:
+    """Coverage periods must neither overlap nor leave a living patient uncovered."""
+    landed_as_of(database, AS_OF_LATER)
+
+    assert landed(database, "select count(*) from raw.patients_current where not is_deceased and payer_id is null") == [
+        (0,)
+    ]
+
+
+def test_the_landed_payer_matches_the_transition_history(database: Path) -> None:
+    landed_as_of(database, AS_OF_LATER)
+
+    [(mismatched,)] = landed(
+        database,
+        f"""with expected as (
+                select PATIENT as patient_id, PAYER as payer_id
+                from read_csv_auto('{SOURCE / "payer_transitions.csv"}')
+                where START_DATE::date <= '{AS_OF_LATER}' and END_DATE::date > '{AS_OF_LATER}'
+            )
+            select count(*) from raw.patients_current p join expected e using (patient_id)
+            where p.payer_id is distinct from e.payer_id""",
+    )
+    assert mismatched == 0
+
+
+def test_a_later_window_moves_some_patients_to_a_different_payer(database: Path, tmp_path: Path) -> None:
+    """The reason this table exists: without it there is nothing for a snapshot to observe."""
+    landed_as_of(database, AS_OF_EARLIER)
+    later = tmp_path / "later.duckdb"
+    landed_as_of(later, AS_OF_LATER)
+
+    earlier_payers = dict(landed(database, "select patient_id, payer_id from raw.patients_current"))
+    later_payers = dict(landed(later, "select patient_id, payer_id from raw.patients_current"))
+
+    changed = [p for p, payer in earlier_payers.items() if later_payers.get(p) != payer]
+    assert changed, "no patient changed payer, so the source does not mutate"
+
+
+def test_a_patient_not_yet_born_is_absent(database: Path) -> None:
+    landed_as_of(database, date(1950, 1, 1))
+
+    [(landed_count, born_by_then)] = landed(
+        database,
+        f"""select (select count(*) from raw.patients_current),
+                   (select count(*) from read_csv_auto('{SOURCE / "patients.csv"}')
+                    where BIRTHDATE <= '1950-01-01')""",
+    )
+    assert landed_count == born_by_then
+    assert landed_count > 0
+
+
+def test_a_death_is_recorded_only_once_it_has_happened(database: Path) -> None:
+    """A snapshot then sees a change when the patient dies, rather than a row vanishing.
+
+    Evaluated mid-history, because every death in the export precedes the recent
+    windows: at those dates nobody dies later, so a death dated ahead of the
+    as-of date would be indistinguishable from one dated correctly.
+    """
+    landed_as_of(database, AS_OF_MIDLIFE)
+
+    [(deceased, dated, premature)] = landed(
+        database,
+        f"""select count(*) filter (where is_deceased), count(deceased_date),
+                   count(*) filter (where deceased_date > '{AS_OF_MIDLIFE}')
+            from raw.patients_current""",
+    )
+    assert deceased > 0
+    assert dated == deceased, "a patient carries a death date without being marked deceased"
+    assert premature == 0, "a death is dated after the window it was reported in"
+
+    [(still_to_die,)] = landed(
+        database,
+        f"""select count(*) from raw.patients_current p
+            where not p.is_deceased and exists (
+                select 1 from read_csv_auto('{SOURCE / "patients.csv"}') s
+                where s.Id = p.patient_id and s.DEATHDATE > '{AS_OF_MIDLIFE}')""",
+    )
+    assert still_to_die > 0, "no patient dies after this date, so the assertion above proves nothing"
