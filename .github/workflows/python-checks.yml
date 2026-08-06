@@ -1,0 +1,38 @@
+name: Python checks
+
+on:
+  pull_request:
+    branches: [main]
+  # Also on direct pushes to main, so commits that bypass a pull request are
+  # still checked.
+  push:
+    branches: [main]
+
+env:
+  # Ruff emits GitHub Actions annotations, so violations appear inline on the
+  # pull request diff rather than only in the job log.
+  RUFF_OUTPUT_FORMAT: github
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to commit SHAs rather than tags. A tag can be moved
+      # to point at new code, which is the mechanism behind several recent
+      # supply chain attacks.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      # Separate steps rather than `make check-all`, so a failure names itself
+      # in the GitHub UI instead of collapsing into one red block.
+      - name: Lint and format
+        run: make lint
+
+      - name: Typecheck
+        run: make typecheck
+
+      - name: Test
+        run: make test

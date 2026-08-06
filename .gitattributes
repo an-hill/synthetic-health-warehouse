@@ -1,0 +1,11 @@
+# Normalise all text to LF in the repository, on every platform.
+* text=auto eol=lf
+
+# The Synthea export is committed once and is the fixture every test reconciles
+# against. A CSV checked out as CRLF on Windows and LF on macOS parses to
+# different values from the same commit, so no tool may rewrite these.
+data/** text eol=lf
+
+# Binary artefacts that must not be newline-touched.
+*.duckdb binary
+*.png binary
