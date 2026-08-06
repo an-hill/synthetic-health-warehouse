@@ -72,14 +72,24 @@ def test_child_service_date_is_the_parents_not_its_own(database: Path) -> None:
 
 
 def test_loading_the_same_window_twice_changes_nothing(database: Path) -> None:
-    """_loaded_at is wall-clock and moves by design, so it is excluded rather than compared."""
-    land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
-    before = {t: landed(database, f"select * exclude (_loaded_at) from raw.{t} order by all") for t in TABLES}
+    """_loaded_at is wall-clock and moves by design, so it is excluded rather than compared.
+
+    Values are compared as text because DuckDB needs pytz installed to hand a
+    timezone-aware timestamp to Python, and nothing outside these tests does.
+    """
+
+    def snapshot() -> dict[str, list[tuple]]:
+        return {
+            t: landed(database, f"select columns(* exclude (_loaded_at))::varchar from raw.{t} order by all")
+            for t in TABLES
+        }
 
     land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
-    after = {t: landed(database, f"select * exclude (_loaded_at) from raw.{t} order by all") for t in TABLES}
+    before = snapshot()
 
-    assert before == after
+    land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
+
+    assert before == snapshot()
 
 
 def test_adjacent_windows_tile_into_the_combined_window(database: Path, tmp_path: Path) -> None:
@@ -109,11 +119,16 @@ def test_report_counts_match_the_database(database: Path) -> None:
 
 
 def test_loaded_at_is_populated_and_timezone_aware(database: Path) -> None:
+    """The stored type is what matters: dbt source freshness reads the column, not a Python client."""
     land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
 
-    rows = landed(database, "select _loaded_at from raw.encounters")
-    assert rows
-    assert all(row[0].tzinfo is not None for row in rows)
+    types = landed(
+        database,
+        "select data_type from information_schema.columns "
+        "where table_schema = 'raw' and table_name = 'encounters' and column_name = '_loaded_at'",
+    )
+    assert types == [("TIMESTAMP WITH TIME ZONE",)]
+    assert landed(database, "select count(*) from raw.encounters where _loaded_at is null") == [(0,)]
 
 
 def test_an_inverted_window_is_rejected(database: Path) -> None:
