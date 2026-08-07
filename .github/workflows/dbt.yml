@@ -17,11 +17,9 @@ jobs:
         with:
           enable-cache: true
 
-      # Four months rather than a day, so the tests run against 878 encounters
-      # and 1,716 claims instead of 6 and 12. It was a day while the export was
-      # CSV and a wide window was slow.
-      - name: Land a window
-        run: uv run python -m loader.land --window-start 2025-09-01 --window-end 2026-01-01
+      # Land a four month window in stages to simulate a data feed
+      - name: Land the first three months
+        run: uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-12-01
 
       # Green here says the sources resolve and name what the loader really
       # wrote. It says nothing about the thresholds: the window landed seconds
@@ -43,3 +41,11 @@ jobs:
 
       - name: Build and test the models
         run: make build
+
+      # fct_claim's incremental branch is unreachable on a fresh warehouse, so
+      # one landing would leave the merge untested. 21 of the claims this window
+      # brings restate ones the first build inserted.
+      - name: A second window exercises the incremental merge
+        run: |
+          uv run python -m loader.land --window-start 2025-12-01 --window-end 2026-01-01
+          make build
