@@ -78,3 +78,38 @@ models:
       - name: _service_date
         description: The date that decided which window this encounter was landed in.
         data_tests: [not_null]
+
+  - name: fct_claim
+    description: >
+      One row per claim, holding its latest submission. Incremental with a merge
+      on claim_id, which is what collapses the append log in raw.claims: a
+      restated claim arrives a second time under the same id and replaces the
+      row rather than adding one. An arrival is read only if it is billed later
+      than the one already held for that same claim, which is what makes the
+      order windows land in irrelevant. Re-landing a window it has already built
+      over needs --full-refresh, because a merge cannot delete.
+    data_tests:
+      - assert_grain_is_unique:
+          arguments:
+            columns: [claim_id]
+    columns:
+      - name: claim_id
+        description: Shared by a claim's original submission and any restatement, and the key the merge collapses them on.
+        data_tests: [unique, not_null]
+      - name: encounter_id
+        description: >
+          Carries no relationships test. A claim is windowed on its billing
+          date, so it can bill for an encounter that predates the range and was
+          never landed. stg_claims counts those at warn severity.
+        data_tests: [not_null]
+      - name: patient_id
+        data_tests: [not_null]
+      - name: received_date
+        description: When the latest submission was billed.
+        data_tests: [not_null]
+      - name: billed_amount
+        description: The current amount, after any restatement.
+        data_tests: [not_null]
+      - name: billing_lag_days
+        description: Days from service to the latest billing, 0 to 100 in this export and heavily skewed to 0.
+        data_tests: [not_null]
