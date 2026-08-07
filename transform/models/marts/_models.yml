@@ -1,0 +1,80 @@
+version: 2
+
+models:
+  - name: dim_provider
+    description: >
+      One row per clinician. Holds every provider the source carries rather than
+      only those with an encounter in the landed window, so the dimension does
+      not change shape under the fact it is conformed against. Synthea's
+      speciality is left behind: all 650 providers are GENERAL PRACTICE.
+    data_tests:
+      - assert_grain_is_unique:
+          arguments:
+            columns: [provider_id]
+    columns:
+      - name: provider_id
+        data_tests: [unique, not_null]
+      - name: zip
+        description: Text, not a number. Every one here is a Massachusetts code beginning with a zero.
+
+  - name: dim_payer
+    description: One row per payer, including NO_INSURANCE, which is how the source records an uncovered patient rather than by a null.
+    data_tests:
+      - assert_grain_is_unique:
+          arguments:
+            columns: [payer_id]
+    columns:
+      - name: payer_id
+        data_tests: [unique, not_null]
+      - name: payer_name
+        data_tests: [not_null]
+
+  - name: fct_encounter
+    description: >
+      One row per encounter, materialised as a table because it is joined and
+      aggregated far more often than it is built. Carries the encounter's own
+      costs and a count of the conditions and medications recorded at it. No
+      claim amounts: raw claims are an append log, so summing them here would
+      count a restatement twice, and they are windowed on their billing date so
+      any total stored here would go stale as later claims arrive.
+    data_tests:
+      - assert_grain_is_unique:
+          arguments:
+            columns: [encounter_id]
+    columns:
+      - name: encounter_id
+        data_tests: [unique, not_null]
+      - name: patient_id
+        description: >
+          Deliberately carries no relationships test. patients_current is
+          replaced per window, so a backfill running windows out of order
+          strands encounters against patients the table no longer holds.
+        data_tests: [not_null]
+      - name: provider_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_provider')
+                field: provider_id
+      - name: payer_id
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_payer')
+                field: payer_id
+      - name: total_cost
+        description: What the encounter cost in total, which its claims apportion between them.
+        data_tests: [not_null]
+      - name: patient_responsibility
+        description: What the payer did not cover. Never negative in this export, where coverage never exceeds the total.
+        data_tests: [not_null]
+      - name: condition_count
+        description: Zero rather than null for the 581 encounters in a four-month window that record none.
+        data_tests: [not_null]
+      - name: medication_count
+        data_tests: [not_null]
+      - name: _service_date
+        description: The date that decided which window this encounter was landed in.
+        data_tests: [not_null]
