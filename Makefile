@@ -2,13 +2,17 @@
 
 UV ?= uv
 RUN := $(UV) run
+DBT := $(RUN) --group dbt dbt
+# Kept apart from DBT because dbt rejects these ahead of the subcommand.
+DBT_DIRS := --project-dir transform --profiles-dir transform
+
 # Absolute because dbt resolves a relative path against the directory dbt was
 # invoked from, and DuckDB silently creates whatever file that lands on.
 # Overridable so a check can point at a copy rather than the real warehouse.
 DBT_WAREHOUSE_PATH ?= $(CURDIR)/warehouse.duckdb
 export DBT_WAREHOUSE_PATH
 
-.PHONY: help test format lint lint-fix typecheck freshness build check-all
+.PHONY: help test format lint lint-fix typecheck freshness build docs check-all
 .DEFAULT_GOAL := help
 
 help:  ## Show available targets
@@ -36,9 +40,15 @@ typecheck:  ## Run ty
 # Out of check-all deliberately: these need a loaded warehouse and the dbt group,
 # and check-all has to keep running without either.
 freshness:  ## Check how recently the loader last wrote each raw table
-	$(RUN) --group dbt dbt source freshness --project-dir transform --profiles-dir transform
+	$(DBT) source freshness $(DBT_DIRS)
 
 build:  ## Build the models and run their tests
-	$(RUN) --group dbt dbt build --project-dir transform --profiles-dir transform
+	$(DBT) build $(DBT_DIRS)
+
+# Regenerated every time because serve will otherwise hand back an older graph
+# without saying so.
+docs:  ## Serve the model documentation and lineage graph on localhost:8080
+	$(DBT) docs generate $(DBT_DIRS)
+	$(DBT) docs serve $(DBT_DIRS)
 
 check-all: lint typecheck test  ## Lint, typecheck, and tests, in the order they fail fastest
