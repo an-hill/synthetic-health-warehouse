@@ -29,6 +29,50 @@ models:
       - name: payer_name
         data_tests: [not_null]
 
+  - name: dim_patient
+    description: >
+      One row per patient per version of their attributes, every one of which
+      is versioned: the payer and death are what move in this export, but the
+      source stands in for a live patient system, where a corrected birthdate
+      or a re-collected ethnicity is ordinary. Built from
+      snap_patient alone: patients.csv
+      is not landed, so patients_current is the only patient source there is.
+      Age is left out and derived at query time instead, since versioning it
+      would add a row per patient per year and bury the changes that matter.
+      Read as of a date with valid_from <= d and (valid_to is null or valid_to
+      > d): the open version carries a null rather than a far-future sentinel,
+      so nothing has to agree on which date means forever.
+    data_tests:
+      - assert_grain_is_unique:
+          arguments:
+            columns: [patient_id, valid_from]
+    columns:
+      - name: patient_id
+        description: Repeated across a patient's versions, so unique only over the open ones.
+        data_tests:
+          - not_null
+          - unique:
+              config:
+                where: is_current
+      - name: payer_id
+        description: >
+          Null for a patient with no coverage on the date. Synthea stops
+          renewing coverage after 2025-12-01, so a version dated past that
+          records a lapse that is an artefact of the export ending rather than
+          of anyone losing insurance.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_payer')
+                field: payer_id
+      - name: birthdate
+        data_tests: [not_null]
+      - name: valid_from
+        description: The window end at which this version was first observed, not the time dbt ran.
+        data_tests: [not_null]
+      - name: valid_to
+        description: The window end at which the next version replaced it, and null for the current one.
+
   - name: fct_encounter
     description: >
       One row per encounter, materialised as a table because it is joined and

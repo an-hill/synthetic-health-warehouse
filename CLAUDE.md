@@ -6,6 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 An analytics pipeline over synthetic patient data, built to gain working experience with dbt and Airflow. The domain is chosen for its awkwardness: claims arrive late, records get restated, and patient attributes change. Those problems are what make incremental models, snapshots, and idempotent backfills necessary rather than decorative.
 
+## The export is a stand-in
+
+**`data/*.parquet` represents a live source system landing into a raw bucket. It is committed and immutable only because simulating a moving source is work this project has chosen not to do.** That is a concession to keeping a clone runnable in fifteen minutes, not a property of the thing being modelled.
+
+Build as though the source restates rows, corrects columns, and changes shape between runs, because the real one would. **"This column cannot change, so nothing need handle it" is a fact about Synthea, not about what Synthea is imitating.** A patient system corrects birthdates and re-collects ethnicity as a matter of routine, which is why `snap_patient` checks every attribute rather than only the two this export moves.
+
+Where the stand-in genuinely constrains a design, say so out loud rather than quietly designing around it. `land_as_of` resolving attributes at an arbitrary past date is the clearest case: a real source could not answer that question, which is the whole reason snapshots exist.
+
 **Add structure when the code needs it, not before.** Directories, CI jobs, and README sections arrive with the work that requires them. Anything below is here because it exists today.
 
 ## Commands
@@ -26,6 +34,7 @@ If a `make` target fails, reach for `uv run <command>` rather than a bare `pytho
 |---|---|
 | `models/staging/` | One view per source table. Rename and cast only: no joins, no filters, no deduplication. |
 | `models/marts/` | Dimensions and facts, materialised as tables by `dbt_project.yml`. |
+| `snapshots/` | `snap_patient`, the type-2 history behind `dim_patient`. |
 | `models/*/_models.yml` | Descriptions and generic tests, one per directory. |
 | `models/staging/_sources.yml` | Both sources: `raw`, and `meta` for the loader's injection log. |
 | `macros/` | Custom generic tests. |
@@ -43,15 +52,19 @@ Four things about dbt here that took finding:
 Some models can only be exercised across windows: `fct_claim`'s merge needs a second landing to reach its incremental branch at all, and a snapshot needs one run per window, because `raw.patients_current` is replaced rather than accumulated and so only ever holds the newest as-of date.
 
 ```sh
-uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-12-01
+uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-11-01
 make build
-uv run python -m loader.land --window-start 2025-12-01 --window-end 2026-01-01
+uv run python -m loader.land --window-start 2025-11-01 --window-end 2025-12-01
 make build
 ```
+
+These are the boundaries CI uses. 2025-12-01 is where the payer history stops being renewed, so a window ending later shows the snapshot mostly lapses to null rather than switches between payers.
 
 To work against a copy instead of `warehouse.duckdb`, pass `database=` to `land_window` and set `DBT_WAREHOUSE_PATH` to the same file.
 
 **Land windows in ascending order.** `raw.patients_current` is filtered to patients born by the window end, so an earlier window landed after a later one strands the encounters already there: 2025-11-03 then 1950-01-01 leaves 834 of 878 encounters pointing at patients the table no longer holds. `--full-refresh` does not undo it, because the wrong as-of date is in raw and a rebuild reproduces it. Re-land the latest window instead.
+
+The snapshot has no such repair. It has already written the wrong as-of date as history, and `--full-refresh` rebuilds it from current state, discarding every version captured so far. Delete `warehouse.duckdb` and land again in order; `assert_patient_versions_tile` is what tells you that you have to.
 
 ## Code conventions
 

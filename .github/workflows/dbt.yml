@@ -17,9 +17,9 @@ jobs:
         with:
           enable-cache: true
 
-      # Land a four month window in stages to simulate a data feed
-      - name: Land the first three months
-        run: uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-12-01
+      # Land a three month window in stages to simulate a data feed
+      - name: Land the first two months
+        run: uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-11-01
 
       # Green here says the sources resolve and name what the loader really
       # wrote. It says nothing about the thresholds: the window landed seconds
@@ -42,10 +42,38 @@ jobs:
       - name: Build and test the models
         run: make build
 
-      # fct_claim's incremental branch is unreachable on a fresh warehouse, so
-      # one landing would leave the merge untested. 21 of the claims this window
-      # brings restate ones the first build inserted.
-      - name: A second window exercises the incremental merge
+      # fct_claim's incremental branch is unreachable on a fresh warehouse, and
+      # snap_patient needs a second as-of date before it can record a change, so
+      # one landing leaves both untested. 2025-12-01 is the last boundary inside
+      # the payer history, after which Synthea stops renewing coverage.
+      - name: A second window exercises the incremental merge and the snapshot
         run: |
-          uv run python -m loader.land --window-start 2025-12-01 --window-end 2026-01-01
+          uv run python -m loader.land --window-start 2025-11-01 --window-end 2025-12-01
           make build
+
+      # Nothing in the models guarantees the second window restates anything the
+      # first landed, so a boundary elsewhere could take it to zero and leave the
+      # merge unexercised with every test still green. Counted off _loaded_at so
+      # the check survives the windows changing; their amounts are reconciled by
+      # assert_restatements_are_absorbed.
+      - name: The merge updated claims the first build inserted
+        run: |
+          uv run python -c "
+          import duckdb, sys
+          con = duckdb.connect('$PWD/warehouse.duckdb', read_only=True)
+          crossed = con.execute('select count(*) from (select claim_id from raw.claims group by 1 having count(distinct _loaded_at) > 1)').fetchone()[0]
+          print(f'{crossed} claims arrived in more than one landing')
+          sys.exit(None if crossed else '::error::the second window restated nothing the first build had inserted')
+          "
+
+      # The snapshot's own tests hold after a single window, so a build that
+      # captured no change at all would still be green. Four patients switch
+      # payer between these two window ends.
+      - name: The snapshot captured the payer changes
+        run: |
+          uv run python -c "
+          import duckdb, sys
+          con = duckdb.connect('$PWD/warehouse.duckdb', read_only=True)
+          versioned = con.execute('select count(*) from (select patient_id from dim_patient group by 1 having count(*) > 1)').fetchone()[0]
+          sys.exit(None if versioned == 4 else f'::error::{versioned} patients hold more than one version, expected 4')
+          "
