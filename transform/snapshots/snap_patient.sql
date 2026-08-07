@@ -10,10 +10,10 @@
     updated_at='_as_of_at'
 ) }}
 
--- Every column but _as_of_at, which cannot take 'all' because _as_of_at moves
--- on every window and would version every patient with it. A demographic that
--- is not listed is not merely unversioned: a snapshot never updates a row it
--- considers unchanged, so a corrected birthdate would leave no trace at all.
+-- Listed exhaustively rather than 'all', which would take _as_of_at with it and
+-- version every patient on every window. An omission here is silent: a snapshot
+-- never updates a row it considers unchanged, so an unlisted column keeps its
+-- first value for ever.
 
 -- Cast because dbt compares updated_at's type against snapshot_get_time(),
 -- which is now()::timestamp on DuckDB, and warns on every build if they differ.

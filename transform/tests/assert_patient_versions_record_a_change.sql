@@ -1,9 +1,8 @@
 -- A version that repeats its predecessor is a version that should not exist.
--- The snapshot cannot take check_cols='all', because _as_of_at moves on every
--- window and would carry every patient with it, so the columns are listed and
--- this is what catches the list going wrong. The mistake is otherwise silent:
--- the grain, the tiling, and the current-version tests all pass over a history
--- versioned 554-fold.
+-- This is what catches snap_patient's check_cols listing a column that moves on
+-- every window, which is otherwise silent: the grain, the tiling, and the
+-- current-version tests all pass over a history versioned once per patient per
+-- window.
 with attributed as (
     -- One value rather than eight comparisons, so that adding a versioned
     -- attribute is a single edit and nulls compare as nulls.

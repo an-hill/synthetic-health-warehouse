@@ -6,14 +6,13 @@ snapshots:
       One row per patient per version of their attributes, every one of which
       is checked: only the payer and death move in this export, but the export
       stands in for a live patient system, and an unlisted column has its
-      restatement absorbed without a version or an error. The check
-      strategy is what the source forces: it
-      holds no column that moves when and only when a patient does, since
-      _as_of_date and _loaded_at both change on every run, so a timestamp
-      strategy would open a version for all 554 patients per window. Versions
-      are dated by the window end rather than by the clock, so a backfill
-      replaying sixty windows in one afternoon records sixty dated states
-      rather than sixty stamped this afternoon.
+      restatement absorbed without a version or an error. The check strategy is
+      what the source forces, since it holds no column that moves when and only
+      when a patient does: _as_of_date and _loaded_at both change on every run,
+      so a timestamp strategy would open a version for all 554 patients per
+      window. Versions are dated by the window end rather than by the clock, so
+      a backfill replaying sixty windows in one afternoon records sixty dated
+      states rather than sixty stamped this afternoon.
     columns:
       - name: patient_id
         data_tests: [not_null]

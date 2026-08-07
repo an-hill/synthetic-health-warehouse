@@ -31,10 +31,10 @@ models:
 
   - name: dim_patient
     description: >
-      One row per patient per version of their attributes. Type 2 over all of
-      them rather than only the payer and death: those are the two Synthea
-      moves, but the source stands in for a live patient system, where a
-      corrected birthdate or a re-collected ethnicity is ordinary. Built from
+      One row per patient per version of their attributes, every one of which
+      is versioned: the payer and death are what move in this export, but the
+      source stands in for a live patient system, where a corrected birthdate
+      or a re-collected ethnicity is ordinary. Built from
       snap_patient alone: patients.csv
       is not landed, so patients_current is the only patient source there is.
       Age is left out and derived at query time instead, since versioning it

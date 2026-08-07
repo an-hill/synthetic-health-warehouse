@@ -42,24 +42,19 @@ jobs:
       - name: Build and test the models
         run: make build
 
-      # fct_claim's incremental branch is unreachable on a fresh warehouse, so
-      # one landing would leave the merge untested. 5 of the claims this window
-      # brings restate ones the first build inserted. It also moves the
-      # snapshot's as-of date on, which is the only way snap_patient sees a
-      # patient change: the boundary is 2025-12-01 because Synthea stops
-      # renewing coverage after it, and a later one would offer mostly lapses to
-      # null rather than switches between payers.
+      # fct_claim's incremental branch is unreachable on a fresh warehouse, and
+      # snap_patient needs a second as-of date before it can record a change, so
+      # one landing leaves both untested. 2025-12-01 is the last boundary inside
+      # the payer history, after which Synthea stops renewing coverage.
       - name: A second window exercises the incremental merge and the snapshot
         run: |
           uv run python -m loader.land --window-start 2025-11-01 --window-end 2025-12-01
           make build
 
-      # How many claims restate one an earlier build inserted is a property of
-      # the injected restatements and of where the boundary falls, not anything
-      # the models guarantee, so a boundary moved later could take it to zero
-      # and leave the merge unexercised with every test still green. Counted
-      # off _loaded_at rather than a date, so it keeps meaning this whatever
-      # the windows become. Their amounts are reconciled by
+      # Nothing in the models guarantees the second window restates anything the
+      # first landed, so a boundary elsewhere could take it to zero and leave the
+      # merge unexercised with every test still green. Counted off _loaded_at so
+      # the check survives the windows changing; their amounts are reconciled by
       # assert_restatements_are_absorbed.
       - name: The merge updated claims the first build inserted
         run: |
