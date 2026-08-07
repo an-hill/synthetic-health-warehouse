@@ -77,3 +77,28 @@ jobs:
           versioned = con.execute('select count(*) from (select patient_id from dim_patient group by 1 having count(*) > 1)').fetchone()[0]
           sys.exit(None if versioned == 4 else f'::error::{versioned} patients hold more than one version, expected 4')
           "
+
+      # The pre-hook is what keeps an out-of-order landing recoverable, so it is
+      # watched refusing rather than assumed to. On a copy, because the landing
+      # it takes is the one that would write unrepairable history if the hook
+      # were ever removed. A red build is not the assertion: without the hook
+      # the build goes red too, at assert_patient_versions_tile, having already
+      # written the history the hook exists to prevent. What is asserted is that
+      # nothing carries the earlier date.
+      - name: An earlier as-of date is refused
+        run: |
+          cp warehouse.duckdb backwards.duckdb
+          uv run python -c "
+          from datetime import date
+          from pathlib import Path
+          from loader.land import land_window
+          land_window(date(2025, 9, 1), date(2025, 10, 1), database=Path('backwards.duckdb'))
+          "
+          DBT_WAREHOUSE_PATH="$PWD/backwards.duckdb" make build || true
+          uv run python -c "
+          import duckdb, sys
+          from datetime import date
+          con = duckdb.connect('$PWD/backwards.duckdb', read_only=True)
+          written = con.execute('select count(*) from snap_patient where dbt_valid_from = ?', [date(2025, 10, 1)]).fetchone()[0]
+          sys.exit(None if written == 0 else f'::error::{written} versions were written dated from the earlier window')
+          "

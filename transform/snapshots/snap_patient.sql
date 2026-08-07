@@ -7,7 +7,8 @@
         'birthdate', 'gender', 'race', 'ethnicity', 'birthplace',
         'payer_id', 'is_deceased', 'deceased_date'
     ],
-    updated_at='_as_of_at'
+    updated_at='_as_of_at',
+    pre_hook="{{ refuse_a_backwards_as_of_date() }}"
 ) }}
 
 -- Listed exhaustively rather than 'all', which would take _as_of_at with it and
