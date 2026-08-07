@@ -41,3 +41,12 @@ sources:
           that can honestly be evaluated as of a date and rewritten whole on
           every run. It shows current state alone so that a snapshot has a
           mutating source to observe.
+
+  - name: meta
+    description: >
+      The loader's answer key: what it injected, as against what the source
+      sent. No model reads it, and only the tests checking that the pipeline
+      absorbed a distortion do.
+    tables:
+      - name: injection_log
+        description: One row per claim arrival, flagging the restatements and carrying the amount before and after each.
