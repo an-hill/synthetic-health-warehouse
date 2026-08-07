@@ -174,9 +174,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--window-start", type=date.fromisoformat, required=True)
     parser.add_argument("--window-end", type=date.fromisoformat, required=True)
+    parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
     args = parser.parse_args()
 
-    report = land_window(args.window_start, args.window_end)
+    report = land_window(args.window_start, args.window_end, database=args.database)
     print(f"{report.window_start} to {report.window_end}")
     for name, count in report.rows.items():
         print(f"  {name:<17} {count:>7,}")

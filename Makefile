@@ -12,12 +12,12 @@ DBT_DIRS := --project-dir transform --profiles-dir transform
 DBT_WAREHOUSE_PATH ?= $(CURDIR)/warehouse.duckdb
 export DBT_WAREHOUSE_PATH
 
-.PHONY: help test format lint lint-fix typecheck freshness build docs check-all
+.PHONY: help test format lint lint-fix typecheck freshness build docs check-windows check-all
 .DEFAULT_GOAL := help
 
 help:  ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-11s\033[0m %s\n", $$1, $$2}'
+		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 test:  ## Run the test suite
 	$(RUN) pytest
@@ -44,6 +44,12 @@ freshness:  ## Check how recently the loader last wrote each raw table
 
 build:  ## Build the models and run their tests
 	$(DBT) build $(DBT_DIRS)
+
+# Out of check-all for the same reason as freshness, and additionally because
+# these hold only once a second window has been landed and built.
+check-windows:  ## Assert what two landed windows should have produced
+	$(RUN) python scripts/check_warehouse.py merge-reached-an-earlier-build
+	$(RUN) python scripts/check_warehouse.py snapshot-captured-the-payer-changes
 
 # Regenerated every time because serve will otherwise hand back an older graph
 # without saying so.
