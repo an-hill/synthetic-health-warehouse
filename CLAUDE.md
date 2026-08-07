@@ -6,6 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 An analytics pipeline over synthetic patient data, built to gain working experience with dbt and Airflow. The domain is chosen for its awkwardness: claims arrive late, records get restated, and patient attributes change. Those problems are what make incremental models, snapshots, and idempotent backfills necessary rather than decorative.
 
+## The export is a stand-in
+
+**`data/*.parquet` represents a live source system landing into a raw bucket. It is committed and immutable only because simulating a moving source is work this project has chosen not to do.** That is a concession to keeping a clone runnable in fifteen minutes, not a property of the thing being modelled.
+
+Build as though the source restates rows, corrects columns, and changes shape between runs, because the real one would. **"This column cannot change, so nothing need handle it" is a fact about Synthea, not about what Synthea is imitating.** A patient system corrects birthdates and re-collects ethnicity as a matter of routine, which is why `snap_patient` checks every attribute rather than only the two this export moves.
+
+Where the stand-in genuinely constrains a design, say so out loud rather than quietly designing around it. `land_as_of` resolving attributes at an arbitrary past date is the clearest case: a real source could not answer that question, which is the whole reason snapshots exist.
+
 **Add structure when the code needs it, not before.** Directories, CI jobs, and README sections arrive with the work that requires them. Anything below is here because it exists today.
 
 ## Commands

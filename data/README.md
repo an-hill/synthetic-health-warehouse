@@ -2,6 +2,8 @@
 
 Synthetic patient records, generated once and committed.
 
+**These files stand in for a live source system.** They are fixed so that a clone runs without Java in fifteen minutes, not because the thing being modelled is fixed. Nothing downstream should assume a column cannot change because this export does not change it.
+
 ## How this was generated
 
 Release `master-branch-latest` of [`synthea-with-dependencies.jar`](https://github.com/synthetichealth/synthea/releases), published 2026-07-22, `sha256:7fdbc2951d305eebac1fa46b1027347efb7380e93053e39ca2ee86613beb84f9`.
