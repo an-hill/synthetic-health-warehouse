@@ -51,29 +51,20 @@ jobs:
           uv run python -m loader.land --window-start 2025-11-01 --window-end 2025-12-01
           make build
 
-      # Nothing in the models guarantees the second window restates anything the
-      # first landed, so a boundary elsewhere could take it to zero and leave the
-      # merge unexercised with every test still green. Counted off _loaded_at so
-      # the check survives the windows changing; their amounts are reconciled by
-      # assert_restatements_are_absorbed.
-      - name: The merge updated claims the first build inserted
-        run: |
-          uv run python -c "
-          import duckdb, sys
-          con = duckdb.connect('$PWD/warehouse.duckdb', read_only=True)
-          crossed = con.execute('select count(*) from (select claim_id from raw.claims group by 1 having count(distinct _loaded_at) > 1)').fetchone()[0]
-          print(f'{crossed} claims arrived in more than one landing')
-          sys.exit(None if crossed else '::error::the second window restated nothing the first build had inserted')
-          "
+      # Neither of these can be a dbt test: both are false after a single
+      # landing, which is a state the build has to stay green in. What each
+      # asserts, and why the models do not already guarantee it, is in
+      # scripts/check_warehouse.py.
+      - name: The second window exercised the merge and the snapshot
+        run: make check-windows
 
-      # The snapshot's own tests hold after a single window, so a build that
-      # captured no change at all would still be green. Four patients switch
-      # payer between these two window ends.
-      - name: The snapshot captured the payer changes
+      # The pre-hook is what keeps an out-of-order landing recoverable, so it is
+      # watched refusing rather than assumed to. On a copy, because the landing
+      # it takes is the one that would write unrepairable history if the hook
+      # were ever removed.
+      - name: An earlier as-of date is refused
         run: |
-          uv run python -c "
-          import duckdb, sys
-          con = duckdb.connect('$PWD/warehouse.duckdb', read_only=True)
-          versioned = con.execute('select count(*) from (select patient_id from dim_patient group by 1 having count(*) > 1)').fetchone()[0]
-          sys.exit(None if versioned == 4 else f'::error::{versioned} patients hold more than one version, expected 4')
-          "
+          cp warehouse.duckdb backwards.duckdb
+          uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-10-01 --database backwards.duckdb
+          DBT_WAREHOUSE_PATH="$PWD/backwards.duckdb" make build || true
+          uv run python scripts/check_warehouse.py nothing-written-from-a-backwards-window --database backwards.duckdb

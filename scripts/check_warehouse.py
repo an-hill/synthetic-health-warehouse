@@ -1,0 +1,87 @@
+"""Assertions over a built warehouse, for properties no dbt test can carry.
+
+Each of these is false after a single landing, which is a legitimate state, so a
+singular test would leave `make build` red on a warehouse that is entirely
+correct. They run after the second build instead.
+
+Every check takes a connection and returns the reason it failed, or None if it
+passed, which is what `sys.exit` wants.
+"""
+
+import argparse
+import sys
+from collections.abc import Callable
+from datetime import date
+from pathlib import Path
+
+import duckdb
+
+DEFAULT_DATABASE = Path("warehouse.duckdb")
+
+# The as-of date of the window landed out of order to watch snap_patient's
+# pre-hook refuse it. Nothing carrying it should ever reach the snapshot.
+BACKWARDS_AS_OF = date(2025, 10, 1)
+
+# Patients switching payer between the two window ends that get landed.
+EXPECTED_VERSIONED_PATIENTS = 4
+
+
+def merge_reached_an_earlier_build(con: duckdb.DuckDBPyConnection) -> str | None:
+    """Check a claim arrived in more than one landing, so the merge updated a row rather than only inserting."""
+    crossed = _count(
+        con,
+        "select count(*) from (select claim_id from raw.claims group by 1 having count(distinct _loaded_at) > 1)",
+    )
+    print(f"{crossed} claims arrived in more than one landing")
+    if crossed == 0:
+        return "the second window restated nothing the first build had inserted"
+    return None
+
+
+def snapshot_captured_the_payer_changes(con: duckdb.DuckDBPyConnection) -> str | None:
+    """Check the snapshot recorded a second version for every patient whose payer moved between the window ends."""
+    versioned = _count(con, "select count(*) from (select patient_id from dim_patient group by 1 having count(*) > 1)")
+    print(f"{versioned} patients hold more than one version")
+    if versioned != EXPECTED_VERSIONED_PATIENTS:
+        return f"expected {EXPECTED_VERSIONED_PATIENTS} patients to hold more than one version"
+    return None
+
+
+def nothing_written_from_a_backwards_window(con: duckdb.DuckDBPyConnection) -> str | None:
+    """Check the snapshot refused the earlier as-of date rather than writing it.
+
+    A red build is not the assertion. Without the pre-hook the build goes red
+    anyway, at assert_patient_versions_tile, having already written the history
+    the hook exists to prevent.
+    """
+    written = _count(con, "select count(*) from snap_patient where dbt_valid_from = ?", BACKWARDS_AS_OF)
+    if written:
+        return f"{written} versions were written dated {BACKWARDS_AS_OF}"
+    return None
+
+
+CHECKS: dict[str, Callable[[duckdb.DuckDBPyConnection], str | None]] = {
+    "merge-reached-an-earlier-build": merge_reached_an_earlier_build,
+    "snapshot-captured-the-payer-changes": snapshot_captured_the_payer_changes,
+    "nothing-written-from-a-backwards-window": nothing_written_from_a_backwards_window,
+}
+
+
+def _count(con: duckdb.DuckDBPyConnection, query: str, *parameters: object) -> int:
+    counted = con.execute(query, list(parameters)).fetchone()
+    return counted[0] if counted else 0
+
+
+def main() -> None:
+    """Run one named check, exiting non-zero with its reason if it fails."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("check", choices=CHECKS)
+    parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
+    args = parser.parse_args()
+
+    with duckdb.connect(args.database, read_only=True) as con:
+        sys.exit(CHECKS[args.check](con))
+
+
+if __name__ == "__main__":
+    main()

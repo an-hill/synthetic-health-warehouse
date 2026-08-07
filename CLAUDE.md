@@ -37,7 +37,7 @@ If a `make` target fails, reach for `uv run <command>` rather than a bare `pytho
 | `snapshots/` | `snap_patient`, the type-2 history behind `dim_patient`. |
 | `models/*/_models.yml` | Descriptions and generic tests, one per directory. |
 | `models/staging/_sources.yml` | Both sources: `raw`, and `meta` for the loader's injection log. |
-| `macros/` | Custom generic tests. |
+| `macros/` | Custom generic tests, and the snapshot's write guard. |
 | `transform/tests/` | Singular tests, each a query that must return no rows. Not `tests/`, which is pytest over the loader. |
 
 Four things about dbt here that took finding:
@@ -64,7 +64,7 @@ To work against a copy instead of `warehouse.duckdb`, pass `database=` to `land_
 
 **Land windows in ascending order.** `raw.patients_current` is filtered to patients born by the window end, so an earlier window landed after a later one strands the encounters already there: 2025-11-03 then 1950-01-01 leaves 834 of 878 encounters pointing at patients the table no longer holds. `--full-refresh` does not undo it, because the wrong as-of date is in raw and a rebuild reproduces it. Re-land the latest window instead.
 
-The snapshot has no such repair. It has already written the wrong as-of date as history, and `--full-refresh` rebuilds it from current state, discarding every version captured so far. Delete `warehouse.duckdb` and land again in order; `assert_patient_versions_tile` is what tells you that you have to.
+The snapshot refuses it rather than absorbing it. A `pre_hook` on `snap_patient` compares the arriving as-of date against the history already held and fails the build when it runs backwards, so nothing is written and re-landing the latest window recovers exactly as it does for raw. That hook is the only reason the mistake stays recoverable: a snapshot that has written a false row cannot be repaired, because `--full-refresh` rebuilds from current state and discards every version captured so far.
 
 ## Code conventions
 
