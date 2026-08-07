@@ -93,6 +93,8 @@ Two relationships are tested and a third deliberately is not. Conditions and med
 
 Nothing tests a reference to `stg_patients_current`, because it would be wrong. The table is replaced each run and filtered to patients born by the window end, so landing an earlier window after a later one strands the encounters already there: landing 2025-11-03 and then 1950-01-01 leaves 834 of 878 encounters pointing at patients the table no longer holds. **A backfill therefore has to run its windows in ascending order**, which is a constraint on the DAG rather than on the models.
 
+`--full-refresh` is not the way out of that one. The raw table itself holds the wrong as-of date, so rebuilding the models over it reproduces the wrong answer faithfully. Re-land the latest window instead. The distinction is worth keeping straight: where raw is complete and only a model is stale, a rebuild is the fix; where the loader has overwritten raw with an older state, only the loader can put it back.
+
 **Freshness here measures the loader, not the data.** `_loaded_at` is wall-clock at the moment a row lands, so it answers whether the extract ran rather than whether the records are recent: backfilling a window from 2015 stamps every row with now and reports green. That is what makes it worth running as a precondition on the build rather than as a report after it. The thresholds warn at 24 hours and error at 48, so one missed daily run warns and two error.
 
 One reading to expect. On the windowed tables freshness reports the last window that landed rows, not the last run, because the loader replaces a window rather than touching every row. `providers`, `payers`, and `patients_current` are rewritten whole each run, so they always read as current.

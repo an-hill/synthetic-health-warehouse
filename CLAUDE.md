@@ -18,6 +18,41 @@ dbt lives in its own dependency group so the loader stays runnable without it: `
 
 If a `make` target fails, reach for `uv run <command>` rather than a bare `python`, `pytest`, or `ruff`. The Makefile is a shortcut to those commands, not a separate way of running them.
 
+## The dbt project
+
+`transform/` holds it. `make build` builds and tests, `make freshness` checks the loader ran recently enough, `make docs` serves the lineage graph.
+
+| Path | |
+|---|---|
+| `models/staging/` | One view per source table. Rename and cast only: no joins, no filters, no deduplication. |
+| `models/marts/` | Dimensions and facts, materialised as tables by `dbt_project.yml`. |
+| `models/*/_models.yml` | Descriptions and generic tests, one per directory. |
+| `models/staging/_sources.yml` | Both sources: `raw`, and `meta` for the loader's injection log. |
+| `macros/` | Custom generic tests. |
+| `transform/tests/` | Singular tests, each a query that must return no rows. Not `tests/`, which is pytest over the loader. |
+
+Four things about dbt here that took finding:
+
+- **`--project-dir` and `--profiles-dir` go after the subcommand.** `dbt --project-dir transform build` fails with `No such option`, and suggests `--deprecated-defer`.
+- **A relative `path` in `profiles.yml` resolves against the invoking directory, not `--project-dir`,** and DuckDB creates whatever file it is handed, so a wrong one gives an empty database rather than an error. The Makefile exports an absolute `DBT_WAREHOUSE_PATH`; override it to point a check at a copy.
+- **Generic test arguments nest under `arguments:`.** The older top-level form still runs, and says so only as a deprecation summary at the end of a build that otherwise reads clean.
+- **dbt validates a source's own properties but accepts invented keys on its tables silently.** A mistyped `data_tests:` disables those tests without a word.
+
+## Landing more than one window
+
+Some models can only be exercised across windows: `fct_claim`'s merge needs a second landing to reach its incremental branch at all, and a snapshot needs one run per window, because `raw.patients_current` is replaced rather than accumulated and so only ever holds the newest as-of date.
+
+```sh
+uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-12-01
+make build
+uv run python -m loader.land --window-start 2025-12-01 --window-end 2026-01-01
+make build
+```
+
+To work against a copy instead of `warehouse.duckdb`, pass `database=` to `land_window` and set `DBT_WAREHOUSE_PATH` to the same file.
+
+**Land windows in ascending order.** `raw.patients_current` is filtered to patients born by the window end, so an earlier window landed after a later one strands the encounters already there: 2025-11-03 then 1950-01-01 leaves 834 of 878 encounters pointing at patients the table no longer holds. `--full-refresh` does not undo it, because the wrong as-of date is in raw and a rebuild reproduces it. Re-land the latest window instead.
+
 ## Code conventions
 
 **Google-style docstrings throughout.** Sections are `Args:`, `Returns:`, `Raises:`, `Yields:`, and `Example:`.
