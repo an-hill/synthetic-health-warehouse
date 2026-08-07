@@ -26,6 +26,7 @@ If a `make` target fails, reach for `uv run <command>` rather than a bare `pytho
 |---|---|
 | `models/staging/` | One view per source table. Rename and cast only: no joins, no filters, no deduplication. |
 | `models/marts/` | Dimensions and facts, materialised as tables by `dbt_project.yml`. |
+| `snapshots/` | `snap_patient`, the type-2 history behind `dim_patient`. |
 | `models/*/_models.yml` | Descriptions and generic tests, one per directory. |
 | `models/staging/_sources.yml` | Both sources: `raw`, and `meta` for the loader's injection log. |
 | `macros/` | Custom generic tests. |
@@ -43,15 +44,19 @@ Four things about dbt here that took finding:
 Some models can only be exercised across windows: `fct_claim`'s merge needs a second landing to reach its incremental branch at all, and a snapshot needs one run per window, because `raw.patients_current` is replaced rather than accumulated and so only ever holds the newest as-of date.
 
 ```sh
-uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-12-01
+uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-11-01
 make build
-uv run python -m loader.land --window-start 2025-12-01 --window-end 2026-01-01
+uv run python -m loader.land --window-start 2025-11-01 --window-end 2025-12-01
 make build
 ```
+
+These are the boundaries CI uses. 2025-12-01 is where the payer history stops being renewed, so a window ending later shows the snapshot mostly lapses to null rather than switches between payers.
 
 To work against a copy instead of `warehouse.duckdb`, pass `database=` to `land_window` and set `DBT_WAREHOUSE_PATH` to the same file.
 
 **Land windows in ascending order.** `raw.patients_current` is filtered to patients born by the window end, so an earlier window landed after a later one strands the encounters already there: 2025-11-03 then 1950-01-01 leaves 834 of 878 encounters pointing at patients the table no longer holds. `--full-refresh` does not undo it, because the wrong as-of date is in raw and a rebuild reproduces it. Re-land the latest window instead.
+
+The snapshot has no such repair. It has already written the wrong as-of date as history, and `--full-refresh` rebuilds it from current state, discarding every version captured so far. Delete `warehouse.duckdb` and land again in order; `assert_patient_versions_tile` is what tells you that you have to.
 
 ## Code conventions
 
