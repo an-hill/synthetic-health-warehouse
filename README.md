@@ -75,11 +75,12 @@ Two smaller differences worth naming. A single DuckDB file has no point-in-time 
 
 ## Transforming
 
-The dbt project is in `transform/`. It declares the seven raw tables as sources, guards them with a freshness check, and models each as a staging view.
+The dbt project is in `transform/`. It declares the seven raw tables as sources, guards them with a freshness check, models each as a staging view, and builds a small star schema on top.
 
 ```sh
 make freshness  # has the loader run recently enough
 make build      # build the models and run their tests
+make docs       # serve the model documentation and lineage graph
 ```
 
 ### Staging
@@ -95,6 +96,24 @@ Nothing tests a reference to `stg_patients_current`, because it would be wrong. 
 **Freshness here measures the loader, not the data.** `_loaded_at` is wall-clock at the moment a row lands, so it answers whether the extract ran rather than whether the records are recent: backfilling a window from 2015 stamps every row with now and reports green. That is what makes it worth running as a precondition on the build rather than as a report after it. The thresholds warn at 24 hours and error at 48, so one missed daily run warns and two error.
 
 One reading to expect. On the windowed tables freshness reports the last window that landed rows, not the last run, because the loader replaces a window rather than touching every row. `providers`, `payers`, and `patients_current` are rewritten whole each run, so they always read as current.
+
+### Marts
+
+Three models, materialised as tables rather than views because they are joined and aggregated far more often than they are built.
+
+| Model | Grain |
+|---|---|
+| `dim_provider` | One row per clinician, all 650 of them, not only the 240 with an encounter in the landed window |
+| `dim_payer` | One row per payer, including `NO_INSURANCE`, which is how the source records an uncovered patient |
+| `fct_encounter` | One row per encounter |
+
+**`fct_encounter` counts its children in CTEs rather than joining them in.** Conditions and medications each fan out from the encounter, at 1.58 and 2.02 rows apiece, so joining both directly turns 878 encounters into 1,653 rows and overstates `sum(total_cost)` by 73%, from £2.53m to £4.38m. Aggregating each child to encounter grain first means it contributes one row and one number.
+
+The version of that bug worth fearing is the one that adds a `group by`. It restores the grain exactly, so the row count and every cost reconcile, and only the counts are wrong: 966 conditions against a true 481. Uniqueness, grain, and relationship tests all pass over it. `transform/tests/assert_child_counts_reconcile.sql` totals the counts against the tables they came from, and is the only one of the 58 checks that catches it.
+
+**No claim amounts here.** `raw.claims` is an append log, so summing it would count a restatement twice. Such a total would also go stale: encounters are windowed on service date and claims on billing date, so an encounter landed in September still has claims arriving in October. Consumers join `fct_claim` to `fct_encounter` rather than reading a rollup that was correct when it was built.
+
+Both dimensions hold every member rather than only the referenced ones, so they do not change shape under the fact they are conformed against.
 
 ## What of this would survive in a real pipeline
 

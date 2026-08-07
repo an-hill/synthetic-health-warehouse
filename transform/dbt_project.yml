@@ -1,3 +1,8 @@
 name: health_warehouse
 version: "0.1.0"
 profile: health_warehouse
+
+models:
+  health_warehouse:
+    marts:
+      +materialized: table
