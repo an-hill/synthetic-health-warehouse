@@ -47,7 +47,7 @@ Encounters and the conditions and medications recorded at them are selected by *
 
 Claims come from Synthea's own claims export, one row per real claim linked to its encounter, and are selected by the date they were **billed**. An encounter bills 1 to 8 of them, averaging 7.97 for an inpatient stay against 1.45 for an ambulatory visit, and they share a billing date, so a visit is billed as a unit. Their amounts apportion the encounter's cost, with the last claim taking the remainder rather than its own rounded share, so per-encounter totals reconcile exactly despite the fan-out. That fan-out is the correctness problem the grain tests exist to catch.
 
-The billing lag is the export's own and is right-skewed the way a real one is: median 0, 95th percentile 6 days, and a tail out to 100. So `fct_claim`'s lookback is not a number we know by construction; it is a percentile to be estimated from a distribution, accepting a miss rate, which is the production problem rather than a simulation of it.
+The billing lag is the export's own and is right-skewed the way a real one is: median 0, 95th percentile 6 days, and a tail out to 100. That tail is why `fct_claim` is keyed and filtered on the billing date rather than the service date: a claim can bill for a service three months gone, and only the billing date says when the warehouse actually saw it.
 
 The one distortion the export lacks is restatement: it contains no `ADJUSTMENT` transactions, so no claim ever re-arrives amended. The loader injects that alone, at 5% of claims, 1 to 30 days later under the same `claim_id` with an adjusted amount. `raw.claims` is therefore an append log of submissions rather than one row per claim, and collapsing it is `fct_claim`'s job. Every injected value is a pure function of the claim id and a fixed seed, computed with `md5`, so a claim lands in the same window whatever order a backfill runs in. `meta.injection_log` records only what was injected, and `raw.claims` carries no restatement flag, so nothing downstream can identify an amendment except by merging on the claim id.
 
@@ -106,6 +106,7 @@ Three models, materialised as tables rather than views because they are joined a
 | `dim_provider` | One row per clinician, all 650 of them, not only the 240 with an encounter in the landed window |
 | `dim_payer` | One row per payer, including `NO_INSURANCE`, which is how the source records an uncovered patient |
 | `fct_encounter` | One row per encounter |
+| `fct_claim` | One row per claim, holding its latest submission |
 
 **`fct_encounter` counts its children in CTEs rather than joining them in.** Conditions and medications each fan out from the encounter, at 1.58 and 2.02 rows apiece, so joining both directly turns 878 encounters into 1,653 rows and overstates `sum(total_cost)` by 73%, from £2.53m to £4.38m. Aggregating each child to encounter grain first means it contributes one row and one number.
 
@@ -114,6 +115,26 @@ The version of that bug worth fearing is the one that adds a `group by`. It rest
 **No claim amounts here.** `raw.claims` is an append log, so summing it would count a restatement twice. Such a total would also go stale: encounters are windowed on service date and claims on billing date, so an encounter landed in September still has claims arriving in October. Consumers join `fct_claim` to `fct_encounter` rather than reading a rollup that was correct when it was built.
 
 Both dimensions hold every member rather than only the referenced ones, so they do not change shape under the fact they are conformed against.
+
+### fct_claim, the incremental model
+
+The only incremental model, merging on `claim_id`. `raw.claims` is an append log, so a restated claim arrives a second time under the same id; the merge replaces the row rather than adding one, which is what turns 1,716 arrivals into 1,656 claims.
+
+**The filter compares per claim, not against a table-wide high-water mark.** An arrival is new if it is later than the one this model already holds *for that claim*. The obvious alternative, `received_date > (select max(received_date) from {{ this }})`, prunes better and is sound only while windows land in ascending order and are never re-landed. It fails silently the moment they do not: backfilling September after December leaves **414 claims of 1,656**, because every September arrival is behind December's high-water mark.
+
+**So landing order does not matter.** Building the four months forward, month by month, reversed, and December before September all produce output identical to a full refresh. That is what a backfill needs, and it is a property of the comparison rather than of the schedule.
+
+**One thing still needs `--full-refresh`,** and it is a property of `merge` rather than of the filter: a merge cannot delete. If a re-landed window drops an arrival the model has already merged, nothing removes the stale row, measured at five claims silently wrong with row counts matching throughout.
+
+That the filter is on `received_date` at all is the decision everything else follows from. It is the date the claim arrived and the date `raw.claims` is partitioned by, so comparing against it is exact. Filtering on `service_date` instead would mean rebuilding whole service-date partitions to catch a claim billed 100 days late, and accepting a permanent miss rate wherever the rebuild window stopped short. That is the argument for `merge` on the claim id over `delete+insert` or `insert_overwrite`.
+
+Every column describes a single arrival: its keys, its dates, its amounts. That is what makes the landing order irrelevant, since nothing in the row depends on having seen the arrivals before it. Anything summarising a claim across arrivals belongs to whatever has the whole history in front of it, which an incremental model reading forward does not.
+
+One cost worth naming. A per-claim comparison cannot be pushed down to skip files or partitions, so the source is read in full on every build. At 1,716 arrivals that is free, and at a billion it would be the first thing to fix.
+
+A date prune beside the comparison is not the fix, however obvious it looks. The prune runs first and discards rows before the comparison can protect them, so a 30-day one reintroduces the failure the comparison exists to prevent: a reversed backfill drops back to 414 claims of 1,656. What works is an exact bound rather than a guessed one, with the scheduler passing the window it is currently processing so the model reads that window and nothing else. Backfilling September then prunes to September, and the comparison still decides what is newer. That is what an Airflow data interval is for, and it is the next thing this project builds.
+
+**`meta.injection_log` is declared as a source so the merge can be checked.** Keeping the wrong arrival is invisible to every structural test: the row count, the grain, and uniqueness are all correct whichever of the two you keep. Reconciling against the injection log is the only check that fails, and it does so for all 80 logged restatements, including the 20 whose original was billed before the window opened and which therefore arrive with no row to update.
 
 ## What of this would survive in a real pipeline
 
@@ -125,7 +146,7 @@ Worth knowing before reading the loader, because the split does not run file by 
 
 **Would be replaced.** Eight lines. Every `read_parquet` call is the seam where a real source connector goes, and nothing around them changes.
 
-That makes the loader the most scaffolding-heavy part of the project, and it is now finished. The layers that follow are closer to shippable: the staging and mart models are the SQL anyone would write, `fct_claim`'s incremental merge and lookback are a production pattern with the lookback genuinely estimated from an observed distribution, and the Airflow DAG with its retries, pool, and backfill is orchestration as it would really be configured. What the loader buys is that those layers meet real problems — late arrival, fan-out, a mutating dimension — rather than clean data where `merge` and `catchup` would be decorative.
+That makes the loader the most scaffolding-heavy part of the project, and it is now finished. The layers that follow are closer to shippable: the staging and mart models are the SQL anyone would write, `fct_claim`'s incremental merge is a production pattern against a source that really does restate, and the Airflow DAG with its retries, pool, and backfill is orchestration as it would really be configured. What the loader buys is that those layers meet real problems, late arrival, fan-out, and a mutating dimension, rather than clean data where `merge` and `catchup` would be decorative.
 
 ## Development
 
