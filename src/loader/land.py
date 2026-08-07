@@ -67,7 +67,7 @@ def land_window(
     if end <= start:
         raise ValueError(f"window end {end} must be after window start {start}")
 
-    with duckdb.connect(database) as con:
+    with connect(database) as con:
         con.execute("create schema if not exists raw")
         con.execute("create schema if not exists meta")
         _create_source_tables(con, source)
@@ -110,6 +110,19 @@ def land_window(
         con.execute("commit")
 
     return LoadReport(window_start=start, window_end=end, rows=rows)
+
+
+def connect(database: Path | str = ":memory:", *, read_only: bool = False) -> duckdb.DuckDBPyConnection:
+    """Open a connection whose date arithmetic does not depend on where it runs.
+
+    The export's timestamps carry a time zone, so casting one to a date resolves
+    it in the session's zone, which is what decides the window a row belongs to.
+    Pinned at the connection rather than at each cast, because the default is
+    inherited from the host and a predicate added later would inherit it too.
+    """
+    con = duckdb.connect(database, read_only=read_only)
+    con.execute("set TimeZone='UTC'")
+    return con
 
 
 def _export(source: Path, name: str) -> str:

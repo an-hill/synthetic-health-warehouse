@@ -4,15 +4,17 @@ Expectations are computed against the committed export with an independent query
 rather than hardcoded, so regenerating the export cannot silently rot them.
 """
 
+import os
+import subprocess
+import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-import duckdb
 import pytest
 
 from loader import claims as claims_module
 from loader import land as land_module
-from loader.land import land_window
+from loader.land import connect, land_window
 
 SOURCE = Path("data")
 TABLES = (
@@ -49,6 +51,10 @@ DAY = date(2025, 11, 3)
 NEXT_DAY = date(2025, 11, 4)
 DAY_AFTER = date(2025, 11, 5)
 
+# A month, so the window holds encounters close enough to midnight that a shift
+# of an hour or two moves some of them across its edges.
+TIMEZONE_WINDOW = (date(2025, 9, 1), date(2025, 10, 1))
+
 
 @pytest.fixture
 def database(tmp_path: Path) -> Path:
@@ -58,7 +64,7 @@ def database(tmp_path: Path) -> Path:
 
 def expected_encounter_ids(start: date, end: date) -> set[str]:
     """The encounter ids a window should land, read straight from the source."""
-    with duckdb.connect() as con:
+    with connect() as con:
         rows = con.execute(
             "select Id from read_parquet(?) where START::date >= ? and START::date < ?",
             [str(SOURCE / "encounters.parquet"), start, end],
@@ -66,8 +72,11 @@ def expected_encounter_ids(start: date, end: date) -> set[str]:
     return {row[0] for row in rows}
 
 
+# Through the loader's connection, so a query here resolves dates the way the
+# loader does. An expectation computed by the same host-dependent cast as the
+# code it checks agrees with it by construction rather than by being right.
 def landed(database: Path, sql: str) -> list[tuple]:
-    with duckdb.connect(database, read_only=True) as con:
+    with connect(database, read_only=True) as con:
         return con.execute(sql).fetchall()
 
 
@@ -445,3 +454,37 @@ class TestPatientsCurrent:
                     where s.Id = p.patient_id and s.DEATHDATE > '{AS_OF_MIDLIFE}')""",
         )
         assert still_to_die > 0, "no patient dies after this date, so the assertion above proves nothing"
+
+
+class TestTheHostTimezone:
+    """The export's timestamps carry a zone, so a naive cast decides windows by where it runs."""
+
+    def test_a_window_lands_the_same_rows_whatever_the_host_timezone(self, tmp_path: Path) -> None:
+        counted = {tz: self._land_under(tmp_path, tz) for tz in ("UTC", "America/Los_Angeles")}
+        assert counted["UTC"] == counted["America/Los_Angeles"], (
+            f"the window landed differently by time zone: {counted}"
+        )
+
+    @staticmethod
+    def _land_under(tmp_path: Path, timezone: str) -> int:
+        """Land a window in a subprocess under `timezone`, returning the encounters it held.
+
+        A subprocess because DuckDB reads the zone once as it loads, so setting
+        TZ in this process would reach the assertion and not the code under it.
+        """
+        database = tmp_path / f"{timezone.replace('/', '_')}.duckdb"
+        script = (
+            "from datetime import date; from pathlib import Path;"
+            "from loader.land import land_window;"
+            f"print(land_window(date.fromisoformat('{TIMEZONE_WINDOW[0]}'),"
+            f" date.fromisoformat('{TIMEZONE_WINDOW[1]}'),"
+            f" database=Path({str(database)!r})).rows['encounters'])"
+        )
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=True,
+            env={**os.environ, "TZ": timezone},
+        )
+        return int(result.stdout.strip().splitlines()[-1])
