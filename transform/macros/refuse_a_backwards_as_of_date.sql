@@ -22,7 +22,7 @@
     {% if held is not none and arriving < held %}
         {% do exceptions.raise_compiler_error(
             this.identifier ~ " holds history to " ~ held ~ " and was handed " ~ arriving
-            ~ ". Land windows in ascending order; a snapshot already written cannot be repaired."
+            ~ ". Re-land the latest window before building, since a snapshot already written cannot be repaired."
         ) %}
     {% endif %}
 {% endif %}
