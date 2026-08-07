@@ -75,11 +75,22 @@ Two smaller differences worth naming. A single DuckDB file has no point-in-time 
 
 ## Transforming
 
-The dbt project is in `transform/`. Nothing is modelled yet: what exists is the source layer over the seven raw tables and the freshness check that guards them.
+The dbt project is in `transform/`. It declares the seven raw tables as sources, guards them with a freshness check, and models each as a staging view.
 
 ```sh
-make freshness
+make freshness  # has the loader run recently enough
+make build      # build the models and run their tests
 ```
+
+### Staging
+
+One view per source table, renaming and casting only: no joins, no filters, no business logic. Codes are carried as text rather than the integers the export sniffed them into, because a SNOMED or RxNorm code is an identifier and the condition-grouping seed will key on it as one.
+
+**`stg_claims` deliberately does not deduplicate.** `raw.claims` is an append log of submissions, so a restated claim appears twice under one `claim_id` with different amounts, and collapsing that is `fct_claim`'s job via a merge on the claim id. A staging model that quietly picked the latest arrival per claim would look entirely reasonable and would remove the thing the incremental model exists to demonstrate. Its `claim_id` therefore carries no `unique` test.
+
+Two relationships are tested and a third deliberately is not. Conditions and medications must reference a landed encounter, and do by construction, since the loader selects them by joining to the window's encounters. Claims need not: a claim is windowed on its billing date, so it can bill for a service that predates the range and was never landed. That test warns rather than fails, and reports 23 orphans over the four months CI builds.
+
+Nothing tests a reference to `stg_patients_current`, because it would be wrong. The table is replaced each run and filtered to patients born by the window end, so landing an earlier window after a later one strands the encounters already there: landing 2025-11-03 and then 1950-01-01 leaves 834 of 878 encounters pointing at patients the table no longer holds. **A backfill therefore has to run its windows in ascending order**, which is a constraint on the DAG rather than on the models.
 
 **Freshness here measures the loader, not the data.** `_loaded_at` is wall-clock at the moment a row lands, so it answers whether the extract ran rather than whether the records are recent: backfilling a window from 2015 stamps every row with now and reports green. That is what makes it worth running as a precondition on the build rather than as a report after it. The thresholds warn at 24 hours and error at 48, so one missed daily run warns and two error.
 
