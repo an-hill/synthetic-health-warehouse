@@ -13,3 +13,9 @@ health_warehouse:
       # so dbt's own threads are safe. It is separate dbt processes under Airflow
       # that need the pool of 1.
       threads: 4
+      settings:
+        # The same pin loader.connect makes, for the same reason: the export's
+        # timestamps carry a zone, so casting one to a date resolves it in the
+        # session's, and a discharge date read in Sydney is a day later than the
+        # same row read in UTC.
+        TimeZone: "UTC"

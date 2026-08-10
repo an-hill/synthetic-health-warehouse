@@ -157,3 +157,54 @@ models:
       - name: billing_lag_days
         description: Days from service to the latest billing, 0 to 100 in this export and heavily skewed to 0.
         data_tests: [not_null]
+
+  - name: fct_readmission
+    description: >
+      One row per index admission, which is the denominator: the rate is
+      sum(is_readmitted) over count(*), computed by whoever asks rather than
+      stored, so a cut by payer or by year needs no new model. An index
+      admission is an inpatient encounter discharged at least 30 days before
+      the latest admission the warehouse holds; a readmission is the earliest
+      later inpatient admission for the same patient, 1 to 30 days after that
+      discharge. Day 30 counts, and the choice is not cosmetic: Synthea
+      generates recurring admissions on near-monthly cycles, so 32 of the 125
+      readmissions sit exactly on day 30 and reading the bound as 29 would drop
+      a quarter of them. The number is not clinically meaningful. Synthea does
+      not model readmission behaviour, seven patients hold 20 or more stays each
+      and account for 110 of the 125, and 79 of the inpatient encounters are a
+      recurring detoxification regimen that a real measure would exclude as
+      planned. The query is the point; the rate is an artefact of the generator.
+    data_tests:
+      - assert_grain_is_unique:
+          arguments:
+            columns: [index_encounter_id]
+    columns:
+      - name: index_encounter_id
+        description: The admission being measured, and the only encounter here that had to have 30 days of observation after it.
+        data_tests: [unique, not_null]
+      - name: patient_id
+        data_tests: [not_null]
+      - name: discharge_date
+        description: >
+          Read in UTC, which profiles.yml pins. The export's timestamps carry a
+          zone, so the same discharge falls on different dates in different
+          ones, and every gap here is counted in whole days from this one.
+        data_tests: [not_null]
+      - name: readmission_encounter_id
+        description: >
+          Null where the admission was not followed by one, which is most of
+          them. Carries no relationships test to fct_encounter: both encounter
+          ids are selected from it, so the test could not fail.
+      - name: days_to_readmission
+        description: >
+          Whole days from discharge to the next admission, 1 to 30, and null
+          where there was none. A gap of 0 or less is a transfer rather than a
+          readmission: one rule covers both the 22 stays beginning on the day of
+          discharge and the 2 beginning before it, and admitting them would take
+          125 readmissions to 142. The excluded stay then stands as its own index
+          admission rather than merging into the first, so a transfer chain is
+          counted as two admissions where a real measure would treat it as one
+          episode.
+      - name: is_readmitted
+        description: The numerator.
+        data_tests: [not_null]

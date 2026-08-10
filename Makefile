@@ -51,6 +51,7 @@ build:  ## Build the models and run their tests
 check-windows:  ## Assert what two landed windows should have produced
 	$(RUN) python scripts/check_warehouse.py merge-reached-an-earlier-build
 	$(RUN) python scripts/check_warehouse.py snapshot-captured-the-payer-changes
+	$(RUN) python scripts/check_warehouse.py readmissions-match-the-export
 
 # Regenerated every time because serve will otherwise hand back an older graph
 # without saying so.

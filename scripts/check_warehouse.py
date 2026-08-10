@@ -27,6 +27,13 @@ BACKWARDS_AS_OF = date(2025, 10, 1)
 # coverage and a further window would record lapses rather than switches.
 EXPECTED_VERSIONED_PATIENTS = 13
 
+# Counted from data/encounters.parquet independently of the model, so that a
+# wrong rule inside it has something to disagree with. 617 inpatient stays land,
+# of which 4 are discharged too near the end of the data to have been observed
+# for 30 days.
+EXPECTED_INDEX_ADMISSIONS = 613
+EXPECTED_READMISSIONS = 125
+
 
 def merge_reached_an_earlier_build(con: duckdb.DuckDBPyConnection) -> str | None:
     """Check a claim arrived in more than one landing, so the merge updated a row rather than only inserting."""
@@ -62,10 +69,30 @@ def nothing_written_from_a_backwards_window(con: duckdb.DuckDBPyConnection) -> s
     return None
 
 
+def readmissions_match_the_export(con: duckdb.DuckDBPyConnection) -> str | None:
+    """Check fct_readmission counts what the export holds, which its own tests cannot.
+
+    The singular tests restate the model's rules, so they catch the model
+    drifting from them and not the rules themselves being changed. Widening the
+    gap to admit same-day transfers in the model alone fails
+    assert_readmission_is_the_earliest_qualifying; widening it in that test too,
+    which is how a rule actually gets changed, leaves all 89 dbt checks green
+    over 142 readmissions rather than 125. A count fixed outside the project is
+    the only thing that notices.
+    """
+    admissions = _count(con, "select count(*) from fct_readmission")
+    readmissions = _count(con, "select count(*) from fct_readmission where is_readmitted")
+    print(f"{readmissions} readmissions over {admissions} index admissions")
+    if (admissions, readmissions) != (EXPECTED_INDEX_ADMISSIONS, EXPECTED_READMISSIONS):
+        return f"expected {EXPECTED_READMISSIONS} over {EXPECTED_INDEX_ADMISSIONS}"
+    return None
+
+
 CHECKS: dict[str, Callable[[duckdb.DuckDBPyConnection], str | None]] = {
     "merge-reached-an-earlier-build": merge_reached_an_earlier_build,
     "snapshot-captured-the-payer-changes": snapshot_captured_the_payer_changes,
     "nothing-written-from-a-backwards-window": nothing_written_from_a_backwards_window,
+    "readmissions-match-the-export": readmissions_match_the_export,
 }
 
 

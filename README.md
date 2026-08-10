@@ -111,7 +111,7 @@ One reading to expect. On the windowed tables freshness reports the last window 
 
 ### Marts
 
-Three models, materialised as tables rather than views because they are joined and aggregated far more often than they are built.
+Five models, materialised as tables rather than views because they are joined and aggregated far more often than they are built.
 
 | Model | Grain |
 |---|---|
@@ -119,6 +119,7 @@ Three models, materialised as tables rather than views because they are joined a
 | `dim_payer` | One row per payer, including `NO_INSURANCE`, which is how the source records an uncovered patient |
 | `fct_encounter` | One row per encounter |
 | `fct_claim` | One row per claim, holding its latest submission |
+| `fct_readmission` | One row per index admission, which is the denominator of the 30-day readmission rate |
 
 **`fct_encounter` counts its children in CTEs rather than joining them in.** Conditions and medications each fan out from the encounter, at 1.58 and 2.02 rows apiece, so joining both directly turns 31,611 encounters into 61,812 rows and overstates `sum(total_cost)` more than fourfold, from £95.8m to £450.9m. The cost multiplies faster than the row count because the encounters that fan out hardest are the expensive ones. Aggregating each child to encounter grain first means it contributes one row and one number.
 
@@ -147,6 +148,18 @@ One cost worth naming. A per-claim comparison cannot be pushed down to skip file
 A date prune beside the comparison is not the fix, however obvious it looks. The prune runs first and discards rows before the comparison can protect them, so a 30-day one reintroduces the failure the comparison exists to prevent: a reversed backfill drops back to 422 claims of 60,433. What works is an exact bound rather than a guessed one, with the scheduler passing the window it is currently processing so the model reads that window and nothing else. Backfilling September then prunes to September, and the comparison still decides what is newer. That is what an Airflow data interval is for, and it is the next thing this project builds.
 
 **`meta.injection_log` is declared as a source so the merge can be checked.** Keeping the wrong arrival is invisible to every structural test: the row count, the grain, and uniqueness are all correct whichever of the two you keep. Reconciling against the injection log is the only check that fails, and it does so for all 2,984 logged restatements.
+
+### fct_readmission, the one that answers a question
+
+Every other model reshapes a table. This one defines something: an index admission is an inpatient encounter discharged at least 30 days before the latest admission the warehouse holds, and a readmission is the earliest later inpatient admission for the same patient, 1 to 30 days after that discharge. 613 index admissions, 125 readmissions, and the rate is `sum(is_readmitted)` over `count(*)` computed by whoever asks rather than stored, so a cut by payer or by year needs no new model.
+
+**The exclusions are where the judgement is.** A gap of 0 or less is a transfer, not a readmission: one rule covers the 22 stays beginning on the day of discharge and the 2 beginning before it, and admitting them would report 142. Day 30 counts, and that is not cosmetic either, because Synthea generates recurring admissions on near-monthly cycles: 32 of the 125 sit exactly on day 30, so reading the bound as 29 would drop a quarter of them. Admissions discharged within 30 days of the end of the data are excluded entirely, on the same reasoning that keeps claim rollups off `fct_encounter`. A rate over admissions that have not yet had time to be readmitted is biased downwards at the edge and gets trusted anyway.
+
+**Its two singular tests catch the model drifting from the rules, not the rules being wrong.** Turning the left join into an inner one collapses the denominator into the numerator and reports a 100% rate with the grain, uniqueness, and null checks all green; `assert_readmission_denominator_is_complete` is the only thing that fails. Reversing the window order names the wrong encounter, and `assert_readmission_is_the_earliest_qualifying` catches it on a single row. But change the 30-day boundary in the model *and* in the test, which is how a definition actually gets edited, and all 89 dbt checks stay green over 142 readmissions. `scripts/check_warehouse.py readmissions-match-the-export` pins the counts against a separate implementation of the definition, and is what notices.
+
+**Dates are read in UTC, pinned in `profiles.yml`.** The export's timestamps carry a zone, so a discharge falls on a different date depending on where dbt runs. Building the same warehouse in Sydney without the pin gives 127 readmissions instead of 125 and 387 differing rows, with every dbt check green. `loader.connect` pins the same setting for the same reason; this is that bug one layer up.
+
+The number is not clinically meaningful and the README would be worse for pretending otherwise. Synthea does not model readmission behaviour, seven patients hold 20 or more inpatient stays each and account for 110 of the 125, and 79 of the inpatient encounters are a recurring detoxification regimen that a real measure would exclude as planned. The query is the deliverable; the rate is an artefact of the generator.
 
 ## Orchestrating
 
