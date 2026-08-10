@@ -39,13 +39,23 @@ The loader lands one half-open date window into `warehouse.duckdb`, so that adja
 uv run python -m loader.land --window-start 2025-11-03 --window-end 2025-11-04
 ```
 
+A populated warehouse takes a history load and then the scheduled windows, building after each so the snapshot sees every as-of date:
+
+```sh
+uv run python -m loader.land --window-start 1900-01-01 --window-end 2025-09-01 && make build
+uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-11-01 && make build
+uv run python -m loader.land --window-start 2025-11-01 --window-end 2025-12-01 && make build
+```
+
+The first is the one-off load a pipeline runs on the day it is deployed, before the schedule takes over. It is not decoration: inpatient stays run at 30 to 50 a year, so the three scheduled months hold five of them, and a readmission mart built over those is empty with every test green.
+
 Re-running a window replaces it rather than adding to it, so a backfill can be repeated, and a window can be re-landed inside a larger one that was already loaded, without double-counting. Replacing a window means deleting it first, and the whole window is one transaction so that a load killed partway leaves it as it was rather than emptying it.
 
 ### One window, two notions of what belongs to it
 
 Encounters and the conditions and medications recorded at them are selected by **service date**: the window holds what happened in it.
 
-Claims come from Synthea's own claims export, one row per real claim linked to its encounter, and are selected by the date they were **billed**. An encounter bills 1 to 8 of them, averaging 7.97 for an inpatient stay against 1.45 for an ambulatory visit, and they share a billing date, so a visit is billed as a unit. Their amounts apportion the encounter's cost, with the last claim taking the remainder rather than its own rounded share, so per-encounter totals reconcile exactly despite the fan-out. That fan-out is the correctness problem the grain tests exist to catch.
+Claims come from Synthea's own claims export, one row per real claim linked to its encounter, and are selected by the date they were **billed**. An encounter bills 1 to 46 of them, averaging 7.98 for an inpatient stay against 1.45 for an ambulatory visit, and they share a billing date, so a visit is billed as a unit. Their amounts apportion the encounter's cost, with the last claim taking the remainder rather than its own rounded share, so per-encounter totals reconcile exactly despite the fan-out. That fan-out is the correctness problem the grain tests exist to catch.
 
 The billing lag is the export's own and is right-skewed the way a real one is: median 0, 95th percentile 6 days, and a tail out to 100. That tail is why `fct_claim` is keyed and filtered on the billing date rather than the service date: a claim can bill for a service three months gone, and only the billing date says when the warehouse actually saw it.
 
@@ -89,9 +99,9 @@ One view per source table, renaming and casting only: no joins, no filters, no b
 
 **`stg_claims` deliberately does not deduplicate.** `raw.claims` is an append log of submissions, so a restated claim appears twice under one `claim_id` with different amounts, and collapsing that is `fct_claim`'s job via a merge on the claim id. A staging model that quietly picked the latest arrival per claim would look entirely reasonable and would remove the thing the incremental model exists to demonstrate. Its `claim_id` therefore carries no `unique` test.
 
-Two relationships are tested and a third deliberately is not. Conditions and medications must reference a landed encounter, and do by construction, since the loader selects them by joining to the window's encounters. Claims need not: a claim is windowed on its billing date, so it can bill for a service that predates the range and was never landed. That test warns rather than fails, and reports 23 orphans over the four months CI builds.
+Two relationships are tested and a third deliberately is not. Conditions and medications must reference a landed encounter, and do by construction, since the loader selects them by joining to the window's encounters. Claims need not: a claim is windowed on its billing date, so it can bill for a service that predates the range and was never landed. That test warns rather than fails, and reports none over the windows CI builds: the history load covers every encounter those windows could bill for. A pipeline whose history began at the first scheduled window would see them, which is why the test stays at warn rather than being deleted for reporting zero.
 
-Nothing tests a reference to `stg_patients_current`, because it would be wrong. The table is replaced each run and filtered to patients born by the window end, so landing an earlier window after a later one strands the encounters already there: landing 2025-11-03 and then 1950-01-01 leaves 834 of 878 encounters pointing at patients the table no longer holds. **A backfill therefore has to run its windows in ascending order**, which is a constraint on the DAG rather than on the models.
+Nothing tests a reference to `stg_patients_current`, because it would be wrong. The table is replaced each run and filtered to patients born by the window end, so landing an earlier window after a later one strands the encounters already there: the three windows in order, and then 1900-01-01 to 1950-01-01, leaves 27,061 of 31,611 encounters pointing at patients the table no longer holds. **A backfill therefore has to run its windows in ascending order**, which is a constraint on the DAG rather than on the models.
 
 `--full-refresh` is not the way out of that one. The raw table itself holds the wrong as-of date, so rebuilding the models over it reproduces the wrong answer faithfully. Re-land the latest window instead. The distinction is worth keeping straight: where raw is complete and only a model is stale, a rebuild is the fix; where the loader has overwritten raw with an older state, only the loader can put it back.
 
@@ -101,18 +111,19 @@ One reading to expect. On the windowed tables freshness reports the last window 
 
 ### Marts
 
-Three models, materialised as tables rather than views because they are joined and aggregated far more often than they are built.
+Five models, materialised as tables rather than views because they are joined and aggregated far more often than they are built.
 
 | Model | Grain |
 |---|---|
-| `dim_provider` | One row per clinician, all 650 of them, not only the 240 with an encounter in the landed window |
+| `dim_provider` | One row per clinician, all 650 of them, not only the 585 with an encounter in the landed window |
 | `dim_payer` | One row per payer, including `NO_INSURANCE`, which is how the source records an uncovered patient |
 | `fct_encounter` | One row per encounter |
 | `fct_claim` | One row per claim, holding its latest submission |
+| `fct_readmission` | One row per index admission, which is the denominator of the 30-day readmission rate |
 
-**`fct_encounter` counts its children in CTEs rather than joining them in.** Conditions and medications each fan out from the encounter, at 1.58 and 2.02 rows apiece, so joining both directly turns 878 encounters into 1,653 rows and overstates `sum(total_cost)` by 73%, from £2.53m to £4.38m. Aggregating each child to encounter grain first means it contributes one row and one number.
+**`fct_encounter` counts its children in CTEs rather than joining them in.** Conditions and medications each fan out from the encounter, at 1.58 and 2.02 rows apiece, so joining both directly turns 31,611 encounters into 61,812 rows and overstates `sum(total_cost)` more than fourfold, from £95.8m to £450.9m. The cost multiplies faster than the row count because the encounters that fan out hardest are the expensive ones. Aggregating each child to encounter grain first means it contributes one row and one number.
 
-The version of that bug worth fearing is the one that adds a `group by`. It restores the grain exactly, so the row count and every cost reconcile, and only the counts are wrong: 966 conditions against a true 481. Uniqueness, grain, and relationship tests all pass over it. `transform/tests/assert_child_counts_reconcile.sql` totals the counts against the tables they came from, and is the only one of the 58 checks that catches it.
+The version of that bug worth fearing is the one that adds a `group by`. It restores the grain exactly, so the row count and every cost reconcile, and only the counts are wrong: 37,254 conditions against a true 19,883. Uniqueness, grain, and relationship tests all pass over it. `transform/tests/assert_child_counts_reconcile.sql` totals the counts against the tables they came from, and is the only one of the 67 checks that catches it.
 
 **No claim amounts here.** `raw.claims` is an append log, so summing it would count a restatement twice. Such a total would also go stale: encounters are windowed on service date and claims on billing date, so an encounter landed in September still has claims arriving in October. Consumers join `fct_claim` to `fct_encounter` rather than reading a rollup that was correct when it was built.
 
@@ -120,11 +131,11 @@ Both dimensions hold every member rather than only the referenced ones, so they 
 
 ### fct_claim, the incremental model
 
-The only incremental model, merging on `claim_id`. `raw.claims` is an append log, so a restated claim arrives a second time under the same id; the merge replaces the row rather than adding one, which is what turns 1,716 arrivals into 1,656 claims.
+The only incremental model, merging on `claim_id`. `raw.claims` is an append log, so a restated claim arrives a second time under the same id; the merge replaces the row rather than adding one, which is what turns 63,417 arrivals into 60,433 claims.
 
-**The filter compares per claim, not against a table-wide high-water mark.** An arrival is new if it is later than the one this model already holds *for that claim*. The obvious alternative, `received_date > (select max(received_date) from {{ this }})`, prunes better and is sound only while windows land in ascending order and are never re-landed. It fails silently the moment they do not: backfilling September after December leaves **414 claims of 1,656**, because every September arrival is behind December's high-water mark.
+**The filter compares per claim, not against a table-wide high-water mark.** An arrival is new if it is later than the one this model already holds *for that claim*. The obvious alternative, `received_date > (select max(received_date) from {{ this }})`, prunes better and is sound only while windows land in ascending order and are never re-landed. It fails silently the moment they do not: landing the three windows in reverse leaves **422 claims of 60,433**, because every earlier arrival is behind the high-water mark the latest window set.
 
-**So landing order does not matter.** Building the four months forward, month by month, reversed, and December before September all produce output identical to a full refresh. That is what a backfill needs, and it is a property of the comparison rather than of the schedule.
+**So landing order does not matter.** Building the windows forward, and building them reversed, both produce 60,433 claims, identical to a full refresh. That is what a backfill needs, and it is a property of the comparison rather than of the schedule.
 
 **One thing still needs `--full-refresh`,** and it is a property of `merge` rather than of the filter: a merge cannot delete. If a re-landed window drops an arrival the model has already merged, nothing removes the stale row, measured at five claims silently wrong with row counts matching throughout.
 
@@ -132,15 +143,30 @@ That the filter is on `received_date` at all is the decision everything else fol
 
 Every column describes a single arrival: its keys, its dates, its amounts. That is what makes the landing order irrelevant, since nothing in the row depends on having seen the arrivals before it. Anything summarising a claim across arrivals belongs to whatever has the whole history in front of it, which an incremental model reading forward does not.
 
-One cost worth naming. A per-claim comparison cannot be pushed down to skip files or partitions, so the source is read in full on every build. At 1,716 arrivals that is free, and at a billion it would be the first thing to fix.
+One cost worth naming. A per-claim comparison cannot be pushed down to skip files or partitions, so the source is read in full on every build. At 63,417 arrivals that is free, and at a billion it would be the first thing to fix.
 
-A date prune beside the comparison is not the fix, however obvious it looks. The prune runs first and discards rows before the comparison can protect them, so a 30-day one reintroduces the failure the comparison exists to prevent: a reversed backfill drops back to 414 claims of 1,656. What works is an exact bound rather than a guessed one, with the scheduler passing the window it is currently processing so the model reads that window and nothing else. Backfilling September then prunes to September, and the comparison still decides what is newer. That is what an Airflow data interval is for, and it is the next thing this project builds.
+A date prune beside the comparison is not the fix, however obvious it looks. The prune runs first and discards rows before the comparison can protect them, so a 30-day one reintroduces the failure the comparison exists to prevent: a reversed backfill drops back to 422 claims of 60,433. What works is an exact bound rather than a guessed one, with the scheduler passing the window it is currently processing so the model reads that window and nothing else. Backfilling September then prunes to September, and the comparison still decides what is newer. That is what an Airflow data interval is for, and it is the next thing this project builds.
 
-**`meta.injection_log` is declared as a source so the merge can be checked.** Keeping the wrong arrival is invisible to every structural test: the row count, the grain, and uniqueness are all correct whichever of the two you keep. Reconciling against the injection log is the only check that fails, and it does so for all 80 logged restatements, including the 20 whose original was billed before the window opened and which therefore arrive with no row to update.
+**`meta.injection_log` is declared as a source so the merge can be checked.** Keeping the wrong arrival is invisible to every structural test: the row count, the grain, and uniqueness are all correct whichever of the two you keep. Reconciling against the injection log is the only check that fails, and it does so for all 2,984 logged restatements.
+
+### fct_readmission, the one that answers a question
+
+Every other model reshapes a table. This one defines something: an index admission is an inpatient encounter discharged at least 30 days before the latest admission the warehouse holds, and a readmission is the earliest later inpatient admission for the same patient, 1 to 30 days after that discharge. 613 index admissions, 125 readmissions, and the rate is `sum(is_readmitted)` over `count(*)` computed by whoever asks rather than stored, so a cut by payer or by year needs no new model.
+
+**The exclusions are where the judgement is.** A gap of 0 or less is a transfer, not a readmission: one rule covers the 22 stays beginning on the day of discharge and the 2 beginning before it, and admitting them would report 142. Day 30 counts, and that is not cosmetic either, because Synthea generates recurring admissions on near-monthly cycles: 32 of the 125 sit exactly on day 30, so reading the bound as 29 would drop a quarter of them. Admissions discharged within 30 days of the end of the data are excluded entirely, on the same reasoning that keeps claim rollups off `fct_encounter`. A rate over admissions that have not yet had time to be readmitted is biased downwards at the edge and gets trusted anyway.
+
+**Its two singular tests catch the model drifting from the rules, not the rules being wrong.** Turning the left join into an inner one collapses the denominator into the numerator and reports a 100% rate with the grain, uniqueness, and null checks all green; `assert_readmission_denominator_is_complete` is the only thing that fails. Reversing the window order names the wrong encounter, and `assert_readmission_is_the_earliest_qualifying` catches it on a single row. But change the 30-day boundary in the model *and* in the test, which is how a definition actually gets edited, and all 89 dbt checks stay green over 142 readmissions. `scripts/check_warehouse.py readmissions-match-the-export` pins the counts against a separate implementation of the definition, and is what notices.
+
+**Dates are read in UTC, pinned in `profiles.yml`.** The export's timestamps carry a zone, so a discharge falls on a different date depending on where dbt runs. Building the same warehouse in Sydney without the pin gives 127 readmissions instead of 125 and 387 differing rows, with every dbt check green. `loader.connect` pins the same setting for the same reason; this is that bug one layer up.
+
+The number is not clinically meaningful and the README would be worse for pretending otherwise. Synthea does not model readmission behaviour, seven patients hold 20 or more inpatient stays each and account for 110 of the 125, and 79 of the inpatient encounters are a recurring detoxification regimen that a real measure would exclude as planned. The query is the deliverable; the rate is an artefact of the generator.
 
 ## Orchestrating
 
 ```sh
+# Airflow keeps its own warehouse at include/warehouse.duckdb, and the DAG's
+# intervals are the scheduled windows only, so land the history into it first.
+uv run python -m loader.land --window-start 1900-01-01 --window-end 2025-09-01 --database include/warehouse.duckdb
 astro dev start     # Airflow on localhost:6563, needs Docker
 ```
 
@@ -152,7 +178,7 @@ Two settings carry the whole thing, and what each one is for was established by 
 
 The pool is named for the warehouse rather than for dbt because that is what it protects. A cold first backfill is exactly the case where the file does not exist yet.
 
-**`max_active_runs=1`, which the pool does not give you.** The pool decides that one task writes at a time; it does not decide that a window is built before the next one lands. Raised to 3, `catchup` starts every interval at once, and because landing is quick and building is not, all three loaders take the pool first: `raw.patients_current` reaches the final window's as-of date within three seconds, before a single model has been built. Nothing is lost from raw, and every model rebuilt from it comes out byte-identical. The snapshot does not, because it is the one thing here that reads a state rather than a range. All three runs snapshot the same table, one as-of date is captured instead of three, and `dim_patient` loses all ten of its version rows.
+**`max_active_runs=1`, which the pool does not give you.** The pool decides that one task writes at a time; it does not decide that a window is built before the next one lands. Raised to 3, `catchup` starts every interval at once, and because landing is quick and building is not, all three loaders take the pool first: `raw.patients_current` reaches the final window's as-of date within three seconds, before a single model has been built. Nothing is lost from raw, and every model rebuilt from it comes out byte-identical. The snapshot does not, because it is the one thing here that reads a state rather than a range. All three runs snapshot the same table, one as-of date is captured instead of three, and `dim_patient` comes out at 554 rows against 567, having lost every version row it should hold.
 
 Every run reports success. The write guard stays quiet, correctly: the as-of date never ran backwards, it skipped. This is the same property as **the snapshot has to run per window** above, arrived at from the other direction, and it is the reason the schedule serialises whole runs rather than merely their writes.
 

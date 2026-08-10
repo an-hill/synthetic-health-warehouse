@@ -9,7 +9,7 @@ snapshots:
       restatement absorbed without a version or an error. The check strategy is
       what the source forces, since it holds no column that moves when and only
       when a patient does: _as_of_date and _loaded_at both change on every run,
-      so a timestamp strategy would open a version for all 554 patients per
+      so a timestamp strategy would open a version for all 551 patients per
       window. Versions are dated by the window end rather than by the clock, so
       a backfill replaying sixty windows in one afternoon records sixty dated
       states rather than sixty stamped this afternoon.
