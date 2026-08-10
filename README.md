@@ -71,7 +71,7 @@ What changes is the payer, resolved from the payer transitions export, which is 
 
 It deliberately carries only attributes that can be evaluated as of a date. Marital status, address, income and healthcare expenses are current values fixed at generation time, so stamping them onto a row dated years earlier would assert something false and make any date-aware join to `dim_patient` confidently wrong. Age is left out for a different reason: it is derivable from the birthdate and the date being asked about, and versioning it would add a dimension row per patient per year, burying the changes that matter.
 
-**The snapshot has to run per window.** Because the table is replaced rather than accumulated, it only ever holds the latest as-of date. A backfill that runs the loader sixty times and `dbt snapshot` once at the end captures one state and loses the other fifty-nine.
+**The snapshot has to run per window.** Because the table is replaced rather than accumulated, it only ever holds the latest as-of date. A backfill that runs the loader sixty times and `dbt snapshot` once at the end captures one state and loses the other fifty-nine. This is why the snapshot has a DAG of its own rather than a task in the build, and the measured consequence is under **Orchestrating**.
 
 ### What backs this up, and how that differs from production
 
@@ -170,21 +170,57 @@ uv run python -m loader.land --window-start 1900-01-01 --window-end 2025-09-01 -
 astro dev start     # Airflow on localhost:6563, needs Docker
 ```
 
-One DAG, `health_warehouse`, lands a window and builds every model as its own task. It runs monthly because the loader's windows are monthly and Airflow's data interval is a half-open date range exactly as `land_window` takes it, so the DAG does no date arithmetic of its own.
+**Two DAGs, because two things here have different idempotency properties.** `health_warehouse` lands a window and builds the models over it, each as its own task. It runs monthly because the loader's windows are monthly and Airflow's data interval is a half-open date range exactly as `land_window` takes it, so the DAG does no date arithmetic of its own.
 
-Two settings carry the whole thing, and what each one is for was established by removing it and watching what the warehouse came out like.
+`patient_history` runs the snapshot and `dim_patient`, and it is not on a schedule at all. It is triggered by an `Asset` the loader DAG emits, with `catchup=False`. Every model is rebuilt from raw and so backfills freely; a snapshot records whatever state it is shown, permanently, and `--full-refresh` discards its history rather than mending it. Scheduling both from one DAG forces the weaker of the two onto the stronger.
+
+The asset is also the honest description of the dependency. The snapshot does not want a monthly slot; it wants to run when raw has moved. Cosmos renders both DAGs from the same manifest, split by one selector: the loader excludes `snap_patient+` and the snapshot DAG selects it, which is a single expression rather than two hand-maintained lists. That selector is forwarded to the test task too, so `dim_patient`'s tests leave with the model instead of running against a table the loader DAG never builds.
+
+### What happens on the first of the month
+
+Take 00:00 UTC on 1 December 2025, the run that processes November. The clock is the only trigger in the system: no sensors, nothing external, and the history load is a one-off that ran the day the pipeline was deployed.
+
+`@monthly` hands the run a half-open data interval of 2025-11-01 to 2025-12-01. Airflow's logical date is the interval start, so the run is labelled November and processes November.
+
+**`land` is the only task that talks to the source.** For a typical month:
+
+| Table | Rows | Selected by |
+|---|---|---|
+| `encounters` | ~218 | their service date falling in the window |
+| `conditions`, `medications` | ~127, ~199 | their parent encounter |
+| `claims` | ~433 | the date they were billed |
+| `providers`, `payers` | 650, 10 | replaced whole |
+| `patients_current` | 554 | replaced whole, resolved as of 2025-12-01 |
+
+Two of those rows are why the project exists. Claims are selected by their billing date rather than their service date, so this run collects claims for encounters months old. `patients_current` is replaced rather than appended, so it only ever holds one as-of date. On success the task emits the `warehouse_raw` asset.
+
+**That asset releases `patient_history` immediately, while `health_warehouse` carries on.** Both then queue for the single pool slot, so they interleave rather than genuinely run at once.
+
+`health_warehouse` checks freshness and builds twelve models as twelve tasks: seven staging views, then `dim_provider`, `dim_payer`, `fct_encounter` and `fct_readmission` rebuilt whole, and `fct_claim` merged incrementally, which is where a restated claim replaces its earlier row. One test task follows all of them. `patient_history` snapshots the patients as they now stand, rebuilds `dim_patient` over the resulting history, and runs the tests spanning the two.
+
+**By two minutes past midnight** raw has gained a month of activity and had four tables replaced wholesale, `fct_claim` has absorbed the new claims and corrected any restated ones, every other mart has been rebuilt from scratch, and `dim_patient` has gained a row for each patient whose payer changed or who died.
+
+**Failure isolation follows the split.** Every task retries twice, a minute apart. If `land` fails, nothing downstream runs and no asset fires. If the build fails, raw is still correct and re-running rebuilds it. If the snapshot DAG fails, it retries without touching the models.
+
+One bound is a property of the export rather than the design: `end_date` stops the schedule after the window ending 2025-12-01, because that is where Synthea stops renewing coverage. A real deployment would carry none.
+
+Two settings carry the rest, and what each one is for was established by removing it and watching what the warehouse came out like.
 
 **A `warehouse` pool of one slot, holding the loader and every dbt task.** DuckDB takes a single writer between processes, and both the loader and each of Cosmos's per-model dbt invocations are their own process. Without the pool they fight for the file, and the two ways that goes are not equally kind. When the warehouse already exists, the loser gets `Could not set lock on file` and fails loudly. When it does not, the lock DuckDB is contending for lives *inside the file it is about to create*, so two writers can both acquire it, both commit, and the second to close leaves behind a file the other's window is simply missing from. Both tasks report success, and each returns an accurate count of the rows it inserted, because each really did insert them.
 
 The pool is named for the warehouse rather than for dbt because that is what it protects. A cold first backfill is exactly the case where the file does not exist yet.
 
-**`max_active_runs=1`, which the pool does not give you.** The pool decides that one task writes at a time; it does not decide that a window is built before the next one lands. Raised to 3, `catchup` starts every interval at once, and because landing is quick and building is not, all three loaders take the pool first: `raw.patients_current` reaches the final window's as-of date within three seconds, before a single model has been built. Nothing is lost from raw, and every model rebuilt from it comes out byte-identical. The snapshot does not, because it is the one thing here that reads a state rather than a range. All three runs snapshot the same table, one as-of date is captured instead of three, and `dim_patient` comes out at 554 rows against 567, having lost every version row it should hold.
-
-Every run reports success. The write guard stays quiet, correctly: the as-of date never ran backwards, it skipped. This is the same property as **the snapshot has to run per window** above, arrived at from the other direction, and it is the reason the schedule serialises whole runs rather than merely their writes.
+**`max_active_runs=1`, which the pool does not give you, and which is no longer for the reason it was.** The pool decides that one task writes at a time; it does not decide the order they arrive in. `raw.patients_current` is replaced rather than accumulated and is filtered to patients born by the window end, so a window landed out of order strands 27,061 of 31,611 encounters against patients the table no longer holds. Only the schedule guarantees ascending order. Its previous justification was protecting the snapshot, which now has its own DAG, and noticing that a setting had outlived its stated reason was the most useful part of splitting them.
 
 Tests run as one task after every model rather than one per model. Cosmos attaches a test to the model it points at, so a `relationships` test on a conformed dimension would run before the fact that references it exists.
 
-The backfill over three monthly intervals produces a warehouse byte-identical to landing the same three windows by hand, and clearing an interval and letting it re-run changes nothing.
+**What the split costs, measured rather than predicted.** An asset-triggered snapshot cannot be backfilled deterministically, and that is the point rather than a defect. Backfilling three monthly intervals produces three loader runs, three asset events, and three snapshot runs, but the loader is quick and the build is not, so a window can land before the snapshot for the previous one has taken the pool. Run twice from a cold warehouse, the backfill captured **two of the three as-of dates both times**, 2025-11-01 and 2025-12-01, leaving `dim_patient` at 558 rows against the 564 the same three windows produce by hand.
+
+Raw came out at 31,611 encounters both times, and every model rebuilt from it, `fct_readmission` included at 125 readmissions, was byte-identical to the warehouse built by hand. Only the history differs, and that contrast is the entire argument for the split. Every run reported success, and the snapshot's write guard stayed quiet, correctly, because the as-of date never ran backwards, it skipped.
+
+Moving the asset from the end of the run onto the `land` task did not change how many dates were captured, which was a prediction that proved wrong: it was expected to give the snapshot the whole build to take the pool in. It is still where the outlet belongs, because raw is the snapshot's only dependency, but the race it was meant to loosen did not measurably loosen.
+
+This is what a snapshot does in production, where a source cannot answer what was true on a past date and the history simply begins the day it was deployed. Feed the windows in one at a time, as a live pipeline would, and all three dates are captured.
 
 ## What of this would survive in a real pipeline
 

@@ -1,26 +1,23 @@
 """Lands one date window and builds the warehouse over it, once per month.
 
 Airflow's data interval is a half-open date range exactly as `land_window`
-takes, so the DAG does no date arithmetic of its own.
+takes, so the DAG does no date arithmetic of its own. The snapshot is built by
+dags/patient_history.py instead, on a schedule that does not backfill.
 """
 
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 from airflow.sdk import dag, task
 from airflow.timetables.interval import CronDataIntervalTimetable
-from cosmos import DbtTaskGroup, LoadMode, ProfileConfig, ProjectConfig, RenderConfig, TestBehavior
+from cosmos import DbtTaskGroup, LoadMode, ProjectConfig, RenderConfig, TestBehavior
 from cosmos.operators.local import DbtSourceLocalOperator
-
-PROJECT = Path("/usr/local/airflow/transform")
-
-# include/ is bind-mounted; anywhere else in the image is discarded on rebuild.
-WAREHOUSE = Path("/usr/local/airflow/include/warehouse.duckdb")
-
-profile = ProfileConfig(
-    profile_name="health_warehouse",
-    target_name="dev",
-    profiles_yml_filepath=PROJECT / "profiles.yml",
+from warehouse import (
+    OPERATOR_ARGS,
+    PROFILE,
+    PROJECT,
+    SNAPSHOT_SELECTOR,
+    WAREHOUSE,
+    WAREHOUSE_LANDED,
 )
 
 
@@ -31,25 +28,23 @@ profile = ProfileConfig(
     schedule=CronDataIntervalTimetable("@monthly", timezone="UTC"),
     start_date=datetime(2025, 9, 1, tzinfo=UTC),
     # Bounds the logical date, which this timetable sets to the interval start,
-    # so this admits the window ending 2025-12-01: the last boundary inside the
-    # payer history. A live source would carry no end date at all.
+    # so this admits the window ending 2025-12-01, where the payer history stops.
     end_date=datetime(2025, 11, 1, tzinfo=UTC),
     catchup=True,
-    # Not what the pool gives. The pool admits one writer at a time and says
-    # nothing about the order they arrive in, so intervals would otherwise land
-    # out of order and leave patients_current describing the wrong date.
+    # Only the schedule keeps windows landing in ascending order, which raw
+    # needs because patients_current is replaced rather than accumulated.
     max_active_runs=1,
     default_args={"retries": 2, "retry_delay": timedelta(minutes=1)},
     tags=["health-warehouse"],
 )
 def health_warehouse():
-    """Land the interval, check the sources are fresh, then build every model."""
+    """Land the interval, check the sources are fresh, then build the models over it."""
 
-    # In the pool because it writes the warehouse, not because it runs dbt. The
-    # lock DuckDB takes lives in the database file, so two loaders opening one
-    # that does not exist yet can both acquire it, and the second to commit
-    # leaves a file the first one's window is missing from, under a green task.
-    @task(pool="warehouse")
+    # In the pool because it writes the warehouse, not because it runs dbt: the
+    # lock DuckDB takes lives in the database file, so two loaders creating one
+    # can both acquire it and the second to commit drops the first's window.
+    # The outlet is here because raw is the snapshot's only dependency.
+    @task(pool="warehouse", outlets=[WAREHOUSE_LANDED])
     def land(data_interval_start=None, data_interval_end=None) -> dict[str, int]:
         from loader.land import land_window
 
@@ -58,11 +53,11 @@ def health_warehouse():
         report = land_window(data_interval_start.date(), data_interval_end.date(), database=WAREHOUSE)  # ty: ignore[unresolved-attribute]
         return report.rows
 
-    # A precondition: run after the build, freshness tells you nothing you can act on.
+    # A precondition: after the build it would tell you nothing you can act on.
     freshness = DbtSourceLocalOperator(
         task_id="source_freshness",
         project_dir=PROJECT,
-        profile_config=profile,
+        profile_config=PROFILE,
         env={"DBT_WAREHOUSE_PATH": str(WAREHOUSE)},
         pool="warehouse",
     )
@@ -73,20 +68,20 @@ def health_warehouse():
             dbt_project_path=PROJECT,
             manifest_path=PROJECT / "target" / "manifest.json",
         ),
-        profile_config=profile,
+        profile_config=PROFILE,
         render_config=RenderConfig(
             load_method=LoadMode.DBT_MANIFEST,
-            # One test task after all the models, not one per model. Cosmos
-            # attaches a test to the model it points at, so dim_provider's
-            # relationships test would run before fct_encounter exists, and
-            # tests here deliberately span models. Only the tests collapse:
-            # model-level runs, retries, and logs are unaffected.
+            # Cosmos forwards this to the test task as well as dropping the
+            # models, so dim_patient's tests leave with the model rather than
+            # running here against a table this DAG never builds.
+            exclude=[SNAPSHOT_SELECTOR],
+            # One test task after all the models, not one per model: tests here
+            # deliberately span models, and Cosmos would otherwise run each
+            # against the model it points at, before its siblings exist.
             test_behavior=TestBehavior.AFTER_ALL,
         ),
-        # env belongs here, not in default_args, where Cosmos ignores it. It
-        # runs dbt from a temporary copy of the project, so a relative path
-        # would silently create an empty database inside that copy.
-        operator_args={"pool": "warehouse", "env": {"DBT_WAREHOUSE_PATH": str(WAREHOUSE)}},
+        # env belongs here, not in default_args, where Cosmos ignores it.
+        operator_args=OPERATOR_ARGS,
     )
 
     land() >> freshness >> build
