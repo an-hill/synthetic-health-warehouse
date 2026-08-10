@@ -5,10 +5,15 @@ from pathlib import Path
 from airflow.sdk import Asset
 from cosmos import ProfileConfig
 
-PROJECT = Path("/usr/local/airflow/transform")
+# dags/ sits directly under the Airflow home in the image and under the
+# repository root in a checkout, so deriving the root rather than naming it is
+# what lets the DAGs be parsed by a test outside the container.
+ROOT = Path(__file__).resolve().parent.parent
+
+PROJECT = ROOT / "transform"
 
 # include/ is bind-mounted; anywhere else in the image is discarded on rebuild.
-WAREHOUSE = Path("/usr/local/airflow/include/warehouse.duckdb")
+WAREHOUSE = ROOT / "include" / "warehouse.duckdb"
 
 # What patient_history waits for. The snapshot reads a state rather than a
 # range, so it runs because raw moved, not because the clock did.

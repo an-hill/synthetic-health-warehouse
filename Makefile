@@ -12,7 +12,7 @@ DBT_DIRS := --project-dir transform --profiles-dir transform
 DBT_WAREHOUSE_PATH ?= $(CURDIR)/warehouse.duckdb
 export DBT_WAREHOUSE_PATH
 
-.PHONY: help test format lint lint-fix typecheck freshness build docs check-windows check-all
+.PHONY: help test test-dags format lint lint-fix typecheck parse freshness build docs check-windows check-all
 .DEFAULT_GOAL := help
 
 help:  ## Show available targets
@@ -37,6 +37,15 @@ lint:  ## Check style and formatting
 # The airflow group is only needed so ty can resolve the DAG's imports.
 typecheck:  ## Run ty
 	$(RUN) --group airflow ty check
+
+parse:  ## Build the dbt manifest the DAGs render from
+	$(DBT) parse $(DBT_DIRS)
+
+# Out of check-all because it needs both optional groups: dbt to build the
+# manifest Cosmos renders from, and airflow to import the DAGs at all.
+# AIRFLOW_HOME is pinned so that importing airflow does not create one at ~.
+test-dags: parse  ## Parse both DAGs and check the selector splitting them still covers the project
+	AIRFLOW_HOME=$(CURDIR)/.airflow $(RUN) --group airflow pytest tests/dags
 
 # Out of check-all deliberately: these need a loaded warehouse and the dbt group,
 # and check-all has to keep running without either.
