@@ -31,8 +31,10 @@ from warehouse import (
     # so this admits the window ending 2025-12-01, where the payer history stops.
     end_date=datetime(2025, 11, 1, tzinfo=UTC),
     catchup=True,
-    # Only the schedule keeps windows landing in ascending order, which raw
-    # needs because patients_current is replaced rather than accumulated.
+    # A guard against a hand-run backfill rather than something the schedule
+    # needs, since only one interval is ever available at a time. Measured at 3:
+    # raw and every model come out identical, and only the snapshot loses as-of
+    # dates.
     max_active_runs=1,
     default_args={"retries": 2, "retry_delay": timedelta(minutes=1)},
     tags=["health-warehouse"],

@@ -210,7 +210,11 @@ Two settings carry the rest, and what each one is for was established by removin
 
 The pool is named for the warehouse rather than for dbt because that is what it protects. A cold first backfill is exactly the case where the file does not exist yet.
 
-**`max_active_runs=1`, which the pool does not give you, and which is no longer for the reason it was.** The pool decides that one task writes at a time; it does not decide the order they arrive in. `raw.patients_current` is replaced rather than accumulated and is filtered to patients born by the window end, so a window landed out of order strands 27,061 of 31,611 encounters against patients the table no longer holds. Only the schedule guarantees ascending order. Its previous justification was protecting the snapshot, which now has its own DAG, and noticing that a setting had outlived its stated reason was the most useful part of splitting them.
+**`max_active_runs=1`, which buys far less than it looks like it does.** A monthly schedule never has two intervals available at once, so in normal operation this setting is dormant. It only bites during a backfill.
+
+Raised to 3 and measured, all three windows land in ascending order within 3.2 seconds of each other, before a single model is built, and raw, `fct_claim`, `fct_encounter` and `fct_readmission` all come out byte-identical to the warehouse built by hand. The runs interleave heavily: the run labelled September builds its models over a raw layer already holding all three windows, and its tests pass against a warehouse containing everything. That is harmless, because every model is a full rebuild from raw, so whichever run writes last is correct and the earlier ones are merely meaningless rather than wrong. Ascending order comes from the pool granting slots in logical-date order, not from the schedule.
+
+The one casualty is the snapshot, and it is the one the write guard cannot catch, because the as-of date skips rather than reverses. At 3 it captures a single as-of date; at 1 it captures two of three. So the setting narrows a race it cannot close, over the only asset here that cannot be rebuilt. It stays because a hand-run backfill is the accident it limits, and because a backfilled as-of date is a fiction in any case: `land_as_of` answers a question no real source could.
 
 Tests run as one task after every model rather than one per model. Cosmos attaches a test to the model it points at, so a `relationships` test on a conformed dimension would run before the fact that references it exists.
 
