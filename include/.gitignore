@@ -1,0 +1,4 @@
+# Astro bind-mounts this directory, so the DAG writes the warehouse here and
+# the host can read it after a run. The file itself is never committed.
+*.duckdb
+*.duckdb.wal

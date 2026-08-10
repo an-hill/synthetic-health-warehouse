@@ -20,7 +20,7 @@ Where the stand-in genuinely constrains a design, say so out loud rather than qu
 
 `make` lists the targets. `make check-all` runs lint, typecheck, and tests.
 
-dbt lives in its own dependency group so the loader stays runnable without it: `uv run --group dbt dbt build`.
+dbt lives in its own dependency group so the loader stays runnable without it: `uv run --group dbt dbt build`. Airflow and Cosmos are the `airflow` group, which the Astro image installs and `make typecheck` needs so `ty` can resolve the DAG's imports.
 
 **Run every piece of Python through `uv run python`,** including throwaway snippets written to check a behaviour. Bare `python3` on this machine is the system 3.9 with none of the project's dependencies, so anything run that way is testing a different environment than the code lives in, and will mislead you.
 
@@ -65,6 +65,19 @@ To work against a copy instead of `warehouse.duckdb`, pass `database=` to `land_
 **Land windows in ascending order.** `raw.patients_current` is filtered to patients born by the window end, so an earlier window landed after a later one strands the encounters already there: 2025-11-03 then 1950-01-01 leaves 834 of 878 encounters pointing at patients the table no longer holds. `--full-refresh` does not undo it, because the wrong as-of date is in raw and a rebuild reproduces it. Re-land the latest window instead.
 
 The snapshot refuses it rather than absorbing it. A `pre_hook` on `snap_patient` compares the arriving as-of date against the history already held and fails the build when it runs backwards, so nothing is written and re-landing the latest window recovers exactly as it does for raw. That hook is the only reason the mistake stays recoverable: a snapshot that has written a false row cannot be repaired, because `--full-refresh` rebuilds from current state and discards every version captured so far.
+
+## Airflow
+
+`astro dev start` brings up Airflow on localhost:6563 and needs Docker running. The DAG is `dags/health_warehouse.py`; `astro dev restart` rebuilds the image, which anything outside `dags/` and `include/` needs, since only those are bind-mounted.
+
+The warehouse lives at `include/warehouse.duckdb` under Airflow, separately from the `warehouse.duckdb` the Makefile builds at the root. `include/` is bind-mounted, so it survives a rebuild and can be read from the host.
+
+Four things about this stack that took finding:
+
+- **Airflow 3 resolves a bare cron string to a `CronTriggerTimetable`, whose interval is `timedelta(0)`.** Every run would hand the loader a window with start equal to end. `CronDataIntervalTimetable` is the one that still spans the period, and a month cannot be expressed as the fixed `timedelta` the trigger timetable takes.
+- **`end_date` bounds the logical date,** which that timetable sets to the interval *start*, so it admits the window beginning on that date rather than the one ending there.
+- **Cosmos takes `env` in `operator_args`, not `default_args`.** It runs dbt from a temporary copy of the project, so without an absolute `DBT_WAREHOUSE_PATH` the profile's relative default silently creates an empty database in that copy.
+- **`ProjectConfig.dbt_project_path` and `ExecutionConfig.dbt_project_path` are mutually exclusive,** and `LoadMode.DBT_MANIFEST` needs `manifest_path` given explicitly.
 
 ## Code conventions
 

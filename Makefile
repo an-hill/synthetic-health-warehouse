@@ -34,8 +34,9 @@ lint:  ## Check style and formatting
 	$(RUN) ruff check .
 	$(RUN) ruff format --check .
 
+# The airflow group is only needed so ty can resolve the DAG's imports.
 typecheck:  ## Run ty
-	$(RUN) ty check
+	$(RUN) --group airflow ty check
 
 # Out of check-all deliberately: these need a loaded warehouse and the dbt group,
 # and check-all has to keep running without either.
