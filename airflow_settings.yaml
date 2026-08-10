@@ -1,0 +1,10 @@
+# Read on start, so the pool exists without anyone clicking through the UI.
+# Committed, unlike the Astro template's default, because it holds a pool and
+# nothing else; a credential here would be a credential in a public repo.
+airflow:
+  pools:
+    # DuckDB takes a single writer between processes, and both the loader and
+    # every model dbt builds are their own process, so one slot serialises them.
+    - pool_name: warehouse
+      pool_slot: 1
+      pool_description: One writer at a time against the single-writer warehouse

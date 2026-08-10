@@ -17,7 +17,12 @@ dev = [
 ]
 # Separate from the loader's own dependencies: the loader must stay runnable and
 # testable without dbt installed, because in Airflow it runs as its own step.
-dbt = ["dbt-duckdb>=1.10"]
+# Pinned exactly because the Astro image installs this same group, and a range
+# would let the image and the Makefile resolve different dbt versions.
+dbt = ["dbt-duckdb==1.10.1"]
+# Never apache-airflow itself: the runtime image owns that, and pip installing
+# over the top gives a container that boots and then misbehaves.
+airflow = ["astronomer-cosmos==1.15.1"]
 
 [build-system]
 requires = ["hatchling"]

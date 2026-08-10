@@ -1,0 +1,3 @@
+# Deliberately empty. The image's ONBUILD requires this file to exist, but the
+# pins live in pyproject.toml's `dbt` and `airflow` groups, which the Dockerfile
+# installs directly.

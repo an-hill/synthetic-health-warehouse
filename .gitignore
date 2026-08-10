@@ -37,10 +37,9 @@ logs/
 # dbt writes an anonymous user id into the project directory on first run.
 .user.yml
 
-# Astronomer CLI state. `airflow_settings.yaml` carries connections and
-# variables, so it holds credentials the moment it stops being local-only.
+# Astronomer CLI state, which is local and regenerated. `airflow_settings.yaml`
+# is tracked instead, so a clone gets the dbt pool without a walkthrough.
 .astro/
-airflow_settings.yaml
 
 # macOS directory metadata
 .DS_Store
