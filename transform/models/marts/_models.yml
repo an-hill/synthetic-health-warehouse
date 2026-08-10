@@ -115,7 +115,7 @@ models:
         description: What the payer did not cover. Never negative in this export, where coverage never exceeds the total.
         data_tests: [not_null]
       - name: condition_count
-        description: Zero rather than null for the 581 encounters in a four-month window that record none.
+        description: Zero rather than null for the 18,991 encounters of 31,611 that record none.
         data_tests: [not_null]
       - name: medication_count
         data_tests: [not_null]

@@ -17,6 +17,12 @@ jobs:
         with:
           enable-cache: true
 
+      # Everything the export holds before the scheduled windows begin.
+      - name: Land the history
+        run: |
+          uv run python -m loader.land --window-start 1900-01-01 --window-end 2025-09-01
+          make build
+
       # Land a three month window in stages to simulate a data feed
       - name: Land the first two months
         run: uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-11-01

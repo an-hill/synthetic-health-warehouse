@@ -22,8 +22,10 @@ DEFAULT_DATABASE = Path("warehouse.duckdb")
 # pre-hook refuse it. Nothing carrying it should ever reach the snapshot.
 BACKWARDS_AS_OF = date(2025, 10, 1)
 
-# Patients switching payer between the two window ends that get landed.
-EXPECTED_VERSIONED_PATIENTS = 4
+# Patients whose attributes move across the three window ends that get landed:
+# nine at 2025-11-01 and four at 2025-12-01, after which Synthea stops renewing
+# coverage and a further window would record lapses rather than switches.
+EXPECTED_VERSIONED_PATIENTS = 13
 
 
 def merge_reached_an_earlier_build(con: duckdb.DuckDBPyConnection) -> str | None:
@@ -39,7 +41,7 @@ def merge_reached_an_earlier_build(con: duckdb.DuckDBPyConnection) -> str | None
 
 
 def snapshot_captured_the_payer_changes(con: duckdb.DuckDBPyConnection) -> str | None:
-    """Check the snapshot recorded a second version for every patient whose payer moved between the window ends."""
+    """Check the snapshot recorded a further version for every patient whose payer moved between the window ends."""
     versioned = _count(con, "select count(*) from (select patient_id from dim_patient group by 1 having count(*) > 1)")
     print(f"{versioned} patients hold more than one version")
     if versioned != EXPECTED_VERSIONED_PATIENTS:

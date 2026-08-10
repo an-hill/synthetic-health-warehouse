@@ -52,6 +52,8 @@ Four things about dbt here that took finding:
 Some models can only be exercised across windows: `fct_claim`'s merge needs a second landing to reach its incremental branch at all, and a snapshot needs one run per window, because `raw.patients_current` is replaced rather than accumulated and so only ever holds the newest as-of date.
 
 ```sh
+uv run python -m loader.land --window-start 1900-01-01 --window-end 2025-09-01
+make build
 uv run python -m loader.land --window-start 2025-09-01 --window-end 2025-11-01
 make build
 uv run python -m loader.land --window-start 2025-11-01 --window-end 2025-12-01
@@ -60,9 +62,11 @@ make build
 
 These are the boundaries CI uses. 2025-12-01 is where the payer history stops being renewed, so a window ending later shows the snapshot mostly lapses to null rather than switches between payers.
 
+**The first window is the history load,** the one-off a pipeline runs on the day it is deployed, before the schedule takes over. It starts in 1900 because the export's first encounter is 1915-10-27, and the marts that measure rather than reshape need it: inpatient stays run at 30 to 50 a year, so the three scheduled months hold five of them and a readmission mart over them is empty with every test green.
+
 To work against a copy instead of `warehouse.duckdb`, pass `database=` to `land_window` and set `DBT_WAREHOUSE_PATH` to the same file.
 
-**Land windows in ascending order.** `raw.patients_current` is filtered to patients born by the window end, so an earlier window landed after a later one strands the encounters already there: 2025-11-03 then 1950-01-01 leaves 834 of 878 encounters pointing at patients the table no longer holds. `--full-refresh` does not undo it, because the wrong as-of date is in raw and a rebuild reproduces it. Re-land the latest window instead.
+**Land windows in ascending order.** `raw.patients_current` is filtered to patients born by the window end, so an earlier window landed after a later one strands the encounters already there: the three windows above, then 1900-01-01 to 1950-01-01, leaves 27,061 of 31,611 encounters pointing at patients the table no longer holds. `--full-refresh` does not undo it, because the wrong as-of date is in raw and a rebuild reproduces it. Re-land the latest window instead.
 
 The snapshot refuses it rather than absorbing it. A `pre_hook` on `snap_patient` compares the arriving as-of date against the history already held and fails the build when it runs backwards, so nothing is written and re-landing the latest window recovers exactly as it does for raw. That hook is the only reason the mistake stays recoverable: a snapshot that has written a false row cannot be repaired, because `--full-refresh` rebuilds from current state and discards every version captured so far.
 
