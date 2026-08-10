@@ -26,10 +26,10 @@ Pinned deliberately. Airflow 3 changed scheduling semantics and `catchup` defaul
 | DuckDB | 1.5.5 |
 | dbt-core | 1.12.0 |
 | dbt-duckdb | 1.10.1 |
-| Airflow | not yet chosen |
-| astronomer-cosmos | not yet chosen |
+| Airflow | 3.3.0, from Astro Runtime 3.3-2 |
+| astronomer-cosmos | 1.15.1 |
 
-Python and the three data versions are locked in `uv.lock`. The Airflow and Cosmos rows are filled in when the Astro Runtime image is chosen, since the image decides them.
+Everything but Airflow is pinned in `pyproject.toml` and locked in `uv.lock`; the Airflow row follows from the runtime image, which owns it. The image installs the same `dbt` and `airflow` dependency groups the Makefile uses, rather than a separate `requirements.txt`, so there is no second place for a version to drift.
 
 ## Loading
 
@@ -137,6 +137,28 @@ One cost worth naming. A per-claim comparison cannot be pushed down to skip file
 A date prune beside the comparison is not the fix, however obvious it looks. The prune runs first and discards rows before the comparison can protect them, so a 30-day one reintroduces the failure the comparison exists to prevent: a reversed backfill drops back to 414 claims of 1,656. What works is an exact bound rather than a guessed one, with the scheduler passing the window it is currently processing so the model reads that window and nothing else. Backfilling September then prunes to September, and the comparison still decides what is newer. That is what an Airflow data interval is for, and it is the next thing this project builds.
 
 **`meta.injection_log` is declared as a source so the merge can be checked.** Keeping the wrong arrival is invisible to every structural test: the row count, the grain, and uniqueness are all correct whichever of the two you keep. Reconciling against the injection log is the only check that fails, and it does so for all 80 logged restatements, including the 20 whose original was billed before the window opened and which therefore arrive with no row to update.
+
+## Orchestrating
+
+```sh
+astro dev start     # Airflow on localhost:6563, needs Docker
+```
+
+One DAG, `health_warehouse`, lands a window and builds every model as its own task. It runs monthly because the loader's windows are monthly and Airflow's data interval is a half-open date range exactly as `land_window` takes it, so the DAG does no date arithmetic of its own.
+
+Two settings carry the whole thing, and what each one is for was established by removing it and watching what the warehouse came out like.
+
+**A `warehouse` pool of one slot, holding the loader and every dbt task.** DuckDB takes a single writer between processes, and both the loader and each of Cosmos's per-model dbt invocations are their own process. Without the pool they fight for the file, and the two ways that goes are not equally kind. When the warehouse already exists, the loser gets `Could not set lock on file` and fails loudly. When it does not, the lock DuckDB is contending for lives *inside the file it is about to create*, so two writers can both acquire it, both commit, and the second to close leaves behind a file the other's window is simply missing from. Both tasks report success, and each returns an accurate count of the rows it inserted, because each really did insert them.
+
+The pool is named for the warehouse rather than for dbt because that is what it protects. A cold first backfill is exactly the case where the file does not exist yet.
+
+**`max_active_runs=1`, which the pool does not give you.** The pool decides that one task writes at a time; it does not decide that a window is built before the next one lands. Raised to 3, `catchup` starts every interval at once, and because landing is quick and building is not, all three loaders take the pool first: `raw.patients_current` reaches the final window's as-of date within three seconds, before a single model has been built. Nothing is lost from raw, and every model rebuilt from it comes out byte-identical. The snapshot does not, because it is the one thing here that reads a state rather than a range. All three runs snapshot the same table, one as-of date is captured instead of three, and `dim_patient` loses all ten of its version rows.
+
+Every run reports success. The write guard stays quiet, correctly: the as-of date never ran backwards, it skipped. This is the same property as **the snapshot has to run per window** above, arrived at from the other direction, and it is the reason the schedule serialises whole runs rather than merely their writes.
+
+Tests run as one task after every model rather than one per model. Cosmos attaches a test to the model it points at, so a `relationships` test on a conformed dimension would run before the fact that references it exists.
+
+The backfill over three monthly intervals produces a warehouse byte-identical to landing the same three windows by hand, and clearing an interval and letting it re-run changes nothing.
 
 ## What of this would survive in a real pipeline
 
