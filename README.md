@@ -164,6 +164,9 @@ The number is not clinically meaningful and the README would be worse for preten
 ## Orchestrating
 
 ```sh
+# Airflow keeps its own warehouse at include/warehouse.duckdb, and the DAG's
+# intervals are the scheduled windows only, so land the history into it first.
+uv run python -m loader.land --window-start 1900-01-01 --window-end 2025-09-01 --database include/warehouse.duckdb
 astro dev start     # Airflow on localhost:6563, needs Docker
 ```
 

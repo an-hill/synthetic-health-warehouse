@@ -76,6 +76,12 @@ The snapshot refuses it rather than absorbing it. A `pre_hook` on `snap_patient`
 
 The warehouse lives at `include/warehouse.duckdb` under Airflow, separately from the `warehouse.duckdb` the Makefile builds at the root. `include/` is bind-mounted, so it survives a rebuild and can be read from the host.
 
+The DAG's intervals are the scheduled windows only, so land the history into it once before starting Airflow, or `fct_readmission` is empty there while the root warehouse holds it:
+
+```sh
+uv run python -m loader.land --window-start 1900-01-01 --window-end 2025-09-01 --database include/warehouse.duckdb
+```
+
 Four things about this stack that took finding:
 
 - **Airflow 3 resolves a bare cron string to a `CronTriggerTimetable`, whose interval is `timedelta(0)`.** Every run would hand the loader a window with start equal to end. `CronDataIntervalTimetable` is the one that still spans the period, and a month cannot be expressed as the fixed `timedelta` the trigger timetable takes.
