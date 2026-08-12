@@ -22,7 +22,8 @@ CLAIM_COLUMNS = (
     "claim_id, encounter_id, patient_id, claim_type_id, service_date, received_date, billed_amount, payer_coverage"
 )
 LOG_COLUMNS = (
-    "claim_id, encounter_id, service_date, received_date, lag_days, is_restatement, amount_before, billed_amount"
+    "claim_id, encounter_id, service_date, received_date, lag_days, is_restatement,"
+    " amount_before, billed_amount as amount_after"
 )
 
 

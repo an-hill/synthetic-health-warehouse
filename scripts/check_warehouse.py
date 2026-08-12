@@ -16,7 +16,7 @@ from pathlib import Path
 
 import duckdb
 
-DEFAULT_DATABASE = Path("warehouse.duckdb")
+from loader.land import DEFAULT_DATABASE, connect
 
 # The as-of date of the window landed out of order to watch snap_patient's
 # pre-hook refuse it. Nothing carrying it should ever reach the snapshot.
@@ -76,9 +76,9 @@ def readmissions_match_the_export(con: duckdb.DuckDBPyConnection) -> str | None:
     drifting from them and not the rules themselves being changed. Widening the
     gap to admit same-day transfers in the model alone fails
     assert_readmission_is_the_earliest_qualifying; widening it in that test too,
-    which is how a rule actually gets changed, leaves all 89 dbt checks green
-    over 142 readmissions rather than 125. A count fixed outside the project is
-    the only thing that notices.
+    which is how a rule actually gets changed, leaves every dbt check green over
+    142 readmissions rather than 125. A count fixed outside the project is the
+    only thing that notices.
     """
     admissions = _count(con, "select count(*) from fct_readmission")
     readmissions = _count(con, "select count(*) from fct_readmission where is_readmitted")
@@ -108,7 +108,7 @@ def main() -> None:
     parser.add_argument("--database", type=Path, default=DEFAULT_DATABASE)
     args = parser.parse_args()
 
-    with duckdb.connect(args.database, read_only=True) as con:
+    with connect(args.database, read_only=True) as con:
         sys.exit(CHECKS[args.check](con))
 
 
