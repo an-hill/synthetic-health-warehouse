@@ -1,17 +1,20 @@
-"""Tests that both DAGs parse, and that the selector splitting them covers the project.
+"""Tests that both DAGs parse, that the selector splitting them covers the project, and that the README draws it.
 
 Cosmos renders these from `transform/target/manifest.json`, so a `dbt parse` has
 to have run first. `make test-dags` does it.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 import pytest
 
 DAGS = Path("dags")
 MANIFEST = Path("transform/target/manifest.json")
+README = Path("README.md")
 
 # The airflow dependency group carries cosmos and airflow together, and the
 # loader stays testable without either, so `make test` skips this file.
@@ -27,6 +30,44 @@ if not MANIFEST.exists():
 BUILD_SUFFIXES = ("_run", "_snapshot")
 
 BUILT = ("model", "snapshot")
+
+MERMAID_BLOCK = re.compile(r"```mermaid\n(.*?)```", re.DOTALL)
+MERMAID_EDGE = re.compile(r"^(\w+) --> (\w+)$")
+MERMAID_CLASS = re.compile(r"^class ([\w,]+) (\w+)$")
+MERMAID_NODE = re.compile(r"^(\w+)$")
+# The only bare word in the block that declares no node.
+MERMAID_KEYWORDS = frozenset({"end"})
+
+# The mermaid class each DAG's nodes are drawn in.
+DIAGRAM_OWNERS = {"loader": "health_warehouse", "history": "patient_history"}
+
+
+class Diagram(NamedTuple):
+    """What the README's lineage block draws, with the class names as the DAGs own them."""
+
+    nodes: set[str]
+    edges: set[tuple[str, str]]
+    classes: dict[str, set[str]]
+
+
+@pytest.fixture(scope="session")
+def diagram() -> Diagram:
+    """The README's mermaid lineage block, parsed."""
+    block = MERMAID_BLOCK.search(README.read_text())
+    assert block, f"{README} has no mermaid block to check"
+
+    nodes: set[str] = set()
+    edges: set[tuple[str, str]] = set()
+    classes: dict[str, set[str]] = {}
+    for line in (raw.strip() for raw in block.group(1).splitlines()):
+        if edge := MERMAID_EDGE.match(line):
+            edges.add((edge.group(1), edge.group(2)))
+            nodes.update(edge.groups())
+        elif assignment := MERMAID_CLASS.match(line):
+            classes[assignment.group(2)] = set(assignment.group(1).split(","))
+        elif MERMAID_NODE.match(line) and line not in MERMAID_KEYWORDS:
+            nodes.add(line)
+    return Diagram(nodes, edges, classes)
 
 
 @pytest.fixture(scope="session")
@@ -138,3 +179,30 @@ class TestTheDagSplit:
 
         assert emitting == {"land"}, f"tasks emitting an asset: {sorted(emitting)}"
         assert {a.name for a in dagbag.dags["health_warehouse"].get_task("land").outlets} == awaited
+
+
+class TestTheReadmeLineageDiagram:
+    """The README's lineage block is the only drawing of the project a reader on GitHub sees.
+
+    Hand-drawn, so it goes stale the way a hand-copied figure does: a model
+    added, a `ref()` moved, or the selector shifting leaves a diagram that
+    renders cleanly and describes a project that no longer exists.
+    """
+
+    def test_it_draws_every_model_and_no_others(self, diagram, manifest) -> None:
+        expected = {node["name"] for node in manifest["nodes"].values() if node["resource_type"] in BUILT}
+
+        assert diagram.nodes == expected, f"missing: {expected - diagram.nodes}, invented: {diagram.nodes - expected}"
+
+    def test_its_edges_are_the_dbt_graph(self, diagram, manifest) -> None:
+        """Sources are left out of the drawing, so the comparison is against model parents alone."""
+        expected = {(parent, child) for child, parents in model_parents(manifest).items() for parent in parents}
+
+        assert diagram.edges == expected, (
+            f"drawn: {sorted(diagram.edges - expected)}, real: {sorted(expected - diagram.edges)}"
+        )
+
+    def test_the_colours_are_the_split_the_dags_actually_make(self, diagram, dagbag) -> None:
+        """Read off the rendered DAGs rather than off `SNAPSHOT_SELECTOR`, which would restate the selector rather than check it."""
+        for mermaid_class, dag_id in DIAGRAM_OWNERS.items():
+            assert diagram.classes[mermaid_class] == built_nodes(dagbag.dags[dag_id]), f"{dag_id} is drawn wrong"
