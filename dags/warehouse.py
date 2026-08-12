@@ -29,7 +29,8 @@ PROFILE = ProfileConfig(
 # path would silently create an empty database inside that copy.
 OPERATOR_ARGS = {"pool": "warehouse", "env": {"DBT_WAREHOUSE_PATH": str(WAREHOUSE)}}
 
-# Everything the snapshot owns: itself, dim_patient, and their tests. The loader
-# DAG excludes this selector and the snapshot DAG selects it, so the two are
-# complements and no node is built twice.
-SNAPSHOT_SELECTOR = "snap_patient+"
+# Everything the snapshot owns: the view it reads, itself, dim_patient, and
+# their tests, which the loader DAG excludes so the two are exact complements.
+# The view is here rather than with the other staging models because the DAGs
+# share only an asset, and a cold start ran the snapshot before it existed.
+SNAPSHOT_SELECTOR = "stg_patients_current+"

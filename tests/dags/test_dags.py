@@ -26,7 +26,6 @@ if not MANIFEST.exists():
 # Cosmos names each task for the node it builds and the dbt command it runs.
 BUILD_SUFFIXES = ("_run", "_snapshot")
 
-SNAPSHOT = "snapshot.health_warehouse.snap_patient"
 BUILT = ("model", "snapshot")
 
 
@@ -61,15 +60,21 @@ def built_nodes(dag) -> set[str]:
     return names
 
 
-def snapshot_and_its_descendants(manifest: dict) -> set[str]:
-    """What the snapshot DAG owns, taken from the dbt graph rather than from the selector it is expressed by."""
-    reached, queue = {SNAPSHOT}, [SNAPSHOT]
-    while queue:
-        for child in manifest["child_map"].get(queue.pop(), []):
-            if child not in reached:
-                reached.add(child)
-                queue.append(child)
-    return {manifest["nodes"][n]["name"] for n in reached if manifest["nodes"].get(n, {}).get("resource_type") in BUILT}
+def model_parents(manifest: dict) -> dict[str, set[str]]:
+    """Each model and snapshot mapped to the models and snapshots it reads, by name.
+
+    Sources are left out: raw is written by the loader task rather than built by
+    either DAG, so an edge to one crosses no boundary.
+    """
+    return {
+        node["name"]: {
+            manifest["nodes"][parent]["name"]
+            for parent in manifest["parent_map"].get(uid, [])
+            if manifest["nodes"].get(parent, {}).get("resource_type") in BUILT
+        }
+        for uid, node in manifest["nodes"].items()
+        if node["resource_type"] in BUILT
+    }
 
 
 class TestTheDagSplit:
@@ -94,14 +99,22 @@ class TestTheDagSplit:
         assert loader & snapshot == set(), f"built by both DAGs: {loader & snapshot}"
         assert loader | snapshot == expected, f"built by neither: {expected - loader - snapshot}"
 
-    def test_the_snapshot_dag_owns_everything_downstream_of_the_snapshot(self, dagbag, manifest) -> None:
+    def test_neither_dag_reads_a_relation_the_other_builds(self, dagbag, manifest) -> None:
         """A partition says every node is built once, and nothing about which DAG builds it.
 
-        Narrowing the selector to `snap_patient` keeps the split exhaustive and
-        disjoint while moving `dim_patient` into the loader DAG, where it would
-        be rebuilt from a history the snapshot has not yet extended.
+        The two DAGs share an asset and nothing else, so a dbt edge crossing
+        between them is ordered by whichever happens to take the pool first. On
+        a cold warehouse that reads as the snapshot failing on a relation the
+        loader DAG has not built yet, then going green on a retry that captures
+        a window too late.
         """
-        assert built_nodes(dagbag.dags["patient_history"]) == snapshot_and_its_descendants(manifest)
+        parents = model_parents(manifest)
+        for dag_id, other_id in (("health_warehouse", "patient_history"), ("patient_history", "health_warehouse")):
+            built = built_nodes(dagbag.dags[dag_id])
+            elsewhere = built_nodes(dagbag.dags[other_id])
+            crossing = {(node, parent) for node in built for parent in parents.get(node, set()) & elsewhere}
+
+            assert crossing == set(), f"{dag_id} reads what {other_id} builds: {sorted(crossing)}"
 
     def test_each_dag_runs_its_tests_once_after_its_own_models(self, dagbag) -> None:
         """One test task per DAG, which is what lets the selector reach the tests as well as the models.
