@@ -33,7 +33,13 @@ models:
       would add a row per patient per year and bury the changes that matter.
       Read as of a date with valid_from <= d and (valid_to is null or valid_to
       > d): the open version carries a null rather than a far-future sentinel,
-      so nothing has to agree on which date means forever.
+      so nothing has to agree on which date means forever. The contract is here
+      for those two columns: a reader comparing a timestamp against a date is
+      relying on a cast, and this is what makes the build fail rather than the
+      cast change under them.
+    config:
+      contract:
+        enforced: true
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -41,6 +47,7 @@ models:
     columns:
       - name: patient_id
         description: Repeated across a patient's versions, so unique only over the open ones.
+        data_type: varchar
         data_tests:
           - not_null
           - unique:
@@ -52,18 +59,38 @@ models:
           renewing coverage after 2025-12-01, so a version dated past that
           records a lapse that is an artefact of the export ending rather than
           of anyone losing insurance.
+        data_type: varchar
         data_tests:
           - relationships:
               arguments:
                 to: ref('dim_payer')
                 field: payer_id
       - name: birthdate
+        data_type: date
         data_tests: [not_null]
+      - name: gender
+        data_type: varchar
+      - name: race
+        data_type: varchar
+      - name: ethnicity
+        data_type: varchar
+      - name: birthplace
+        data_type: varchar
+      - name: is_deceased
+        data_type: boolean
+      - name: deceased_date
+        description: Null for a living patient, and the only attribute here that can move from a value back to null under a correction.
+        data_type: date
       - name: valid_from
         description: The window end at which this version was first observed, not the time dbt ran.
+        data_type: timestamp
         data_tests: [not_null]
       - name: valid_to
         description: The window end at which the next version replaced it, and null for the current one.
+        data_type: timestamp
+      - name: is_current
+        description: Whether valid_to is null, carried as a column so a consumer filtering to the open version does not have to know that.
+        data_type: boolean
 
   - name: fct_encounter
     description: >
@@ -158,23 +185,36 @@ models:
       and account for 110 of the 125, and 79 of the inpatient encounters are a
       recurring detoxification regimen that a real measure would exclude as
       planned. The query is the point; the rate is an artefact of the generator.
+      The contract is here for the column set: this is the one mart a consumer
+      would compute a rate from, and a column quietly added or dropped changes
+      what that rate is over.
+    config:
+      contract:
+        enforced: true
     columns:
       - name: index_encounter_id
         description: The admission being measured, and the only encounter here that had to have 30 days of observation after it.
+        data_type: varchar
         data_tests: [unique, not_null]
       - name: patient_id
+        data_type: varchar
         data_tests: [not_null]
+      - name: admit_date
+        description: Carried so the denominator can be cut by period without joining back to the encounter it came from.
+        data_type: date
       - name: discharge_date
         description: >
           Read in UTC, which profiles.yml pins. The export's timestamps carry a
           zone, so the same discharge falls on different dates in different
           ones, and every gap here is counted in whole days from this one.
+        data_type: date
         data_tests: [not_null]
       - name: readmission_encounter_id
         description: >
           Null where the admission was not followed by one, which is most of
           them. Carries no relationships test to fct_encounter: both encounter
           ids are selected from it, so the test could not fail.
+        data_type: varchar
       - name: days_to_readmission
         description: >
           Whole days from discharge to the next admission, 1 to 30, and null
@@ -191,6 +231,8 @@ models:
                 min_value: 1
                 max_value: 30
                 inclusive: true
+        data_type: bigint
       - name: is_readmitted
         description: The numerator.
+        data_type: boolean
         data_tests: [not_null]
