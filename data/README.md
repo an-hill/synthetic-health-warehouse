@@ -50,8 +50,8 @@ Converting was verified to change nothing: every table lands identically from ei
 |---|---|---|
 | `patients.parquet` | 554 | One per patient |
 | `encounters.parquet` | 31,824 | One per encounter |
-| `conditions.parquet` | 19,993 | One per condition onset, 1.58 per encounter on average and up to 11 |
-| `medications.parquet` | 29,004 | One per medication order, 2.02 per encounter on average |
+| `conditions.parquet` | 19,993 | One per condition onset, 1.58 at the encounters that record any and up to 11 |
+| `medications.parquet` | 29,004 | One per medication order, 2.02 at the encounters that record any |
 | `providers.parquet` | 650 | One per clinician, of which 587 appear in `encounters` |
 | `claims.parquet` | 60,828 | One per claim, linked to its encounter by `APPOINTMENTID` |
 | `payer_transitions.parquet` | 20,693 | One per coverage period, 37.7 per patient |
@@ -65,7 +65,7 @@ Encounters run from 1915-10-27 to 2025-12-31, but 23,404 of the 31,824 fall in 2
 
 Conditions are coded in SNOMED CT throughout, using 250 distinct codes. That is the set the condition-grouping seed has to cover.
 
-Claims fan out over encounters at 1.91 apiece, from 1 to 8, and the heavier classes carry more: an inpatient stay bills 7.97 on average against 1.45 for an ambulatory visit. Getting per-encounter cost right across that fan-out is what the grain tests exist to catch.
+Claims fan out over encounters at 1.91 apiece, from 1 to 46, and the heavier classes carry more: an inpatient stay bills 7.97 on average against 1.45 for an ambulatory visit. Getting per-encounter cost right across that fan-out is what the grain tests exist to catch.
 
 `LASTBILLEDDATE1` is a real billing date, distinct from `SERVICEDATE` and populated on every row. The lag between them is right-skewed the way a real one is: mean 0.77 days, median 0, 95th percentile 6, and a tail out to 100. All the claims for one encounter share a billing date, so a visit is always billed as a unit.
 

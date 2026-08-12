@@ -1,6 +1,6 @@
 -- Counted in CTEs rather than joined in directly: at 1.58 conditions and 2.02
--- medications per encounter, joining both multiplies the grain and every
--- measure hanging off it.
+-- medications at the encounters that record any, joining both multiplies the
+-- grain and every measure hanging off it.
 with condition_counts as (
     select
         encounter_id,
