@@ -686,43 +686,6 @@ wheels = [
 ]
 
 [[package]]
-name = "dbt-airflow"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "duckdb" },
-]
-
-[package.dev-dependencies]
-airflow = [
-    { name = "astronomer-cosmos" },
-]
-dbt = [
-    { name = "dbt-duckdb" },
-]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "sqlfluff" },
-    { name = "sqlfluff-templater-dbt" },
-    { name = "ty" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "duckdb", specifier = ">=1.5" }]
-
-[package.metadata.requires-dev]
-airflow = [{ name = "astronomer-cosmos", specifier = "==1.15.1" }]
-dbt = [{ name = "dbt-duckdb", specifier = "==1.10.1" }]
-dev = [
-    { name = "pytest" },
-    { name = "ruff" },
-    { name = "sqlfluff" },
-    { name = "sqlfluff-templater-dbt" },
-    { name = "ty", specifier = "==0.0.66" },
-]
-
-[[package]]
 name = "dbt-common"
 version = "1.38.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2754,6 +2717,43 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/50/ea/10957367bf49b401a8100ff434f453a340cc30c9c2fc3b2367e6c282f03d/svcs-26.1.0.tar.gz", hash = "sha256:71550e3b228d529448136d78013b2d65528eec4632b8779f8f89c1d8585eed99", size = 906116, upload-time = "2026-07-13T10:09:38.322Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/8c/5f9441100851bea8f4735cf54a2980d2ad9300a5933c1d5e416448fd789a/svcs-26.1.0-py3-none-any.whl", hash = "sha256:87428c6371af6ae5d0936193613ba4e463118f36b43e15a708f417a8e0b85520", size = 23609, upload-time = "2026-07-13T10:09:36.945Z" },
+]
+
+[[package]]
+name = "synthetic-health-warehouse"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "duckdb" },
+]
+
+[package.dev-dependencies]
+airflow = [
+    { name = "astronomer-cosmos" },
+]
+dbt = [
+    { name = "dbt-duckdb" },
+]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "sqlfluff" },
+    { name = "sqlfluff-templater-dbt" },
+    { name = "ty" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "duckdb", specifier = ">=1.5" }]
+
+[package.metadata.requires-dev]
+airflow = [{ name = "astronomer-cosmos", specifier = "==1.15.1" }]
+dbt = [{ name = "dbt-duckdb", specifier = "==1.10.1" }]
+dev = [
+    { name = "pytest" },
+    { name = "ruff" },
+    { name = "sqlfluff" },
+    { name = "sqlfluff-templater-dbt" },
+    { name = "ty", specifier = "==0.0.66" },
 ]
 
 [[package]]

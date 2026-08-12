@@ -1,5 +1,5 @@
 [project]
-name = "dbt-airflow"
+name = "synthetic-health-warehouse"
 version = "0.1.0"
 description = "A synthetic health warehouse: windowed loader, dbt star schema, Airflow orchestration"
 readme = "README.md"
