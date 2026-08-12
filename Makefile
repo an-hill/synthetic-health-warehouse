@@ -44,7 +44,7 @@ parse:  ## Build the dbt manifest the DAGs render from
 # Out of check-all because it needs both optional groups: dbt to build the
 # manifest Cosmos renders from, and airflow to import the DAGs at all.
 # AIRFLOW_HOME is pinned so that importing airflow does not create one at ~.
-test-dags: parse  ## Parse both DAGs and check the selector splitting them still covers the project
+test-dags: parse  ## Parse both DAGs, and check the selector splitting them still covers the project and matches the README
 	AIRFLOW_HOME=$(CURDIR)/.airflow $(RUN) --group airflow pytest tests/dags
 
 # Out of check-all deliberately: these need a loaded warehouse and the dbt group,

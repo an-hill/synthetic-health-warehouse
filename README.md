@@ -26,6 +26,49 @@ The first is the history load a pipeline runs on the day it is deployed; the oth
 
 `make` lists the rest. `make docs` serves the lineage graph, `make check-all` runs lint, typecheck, and the loader's tests. For the orchestrated version, `astro dev start` needs Docker and brings Airflow up on localhost:6563 against its own warehouse under `include/`.
 
+## The dbt project
+
+```mermaid
+flowchart LR
+  subgraph staging
+    stg_encounters
+    stg_conditions
+    stg_medications
+    stg_claims
+    stg_providers
+    stg_payers
+    stg_patients_current
+  end
+  subgraph snapshots
+    snap_patient
+  end
+  subgraph marts
+    fct_encounter
+    fct_claim
+    fct_readmission
+    dim_provider
+    dim_payer
+    dim_patient
+  end
+
+  stg_encounters --> fct_encounter
+  stg_conditions --> fct_encounter
+  stg_medications --> fct_encounter
+  fct_encounter --> fct_readmission
+  stg_claims --> fct_claim
+  stg_providers --> dim_provider
+  stg_payers --> dim_payer
+  stg_patients_current --> snap_patient
+  snap_patient --> dim_patient
+
+  classDef loader fill:#1f4e79,color:#ffffff,stroke:#12314b
+  classDef history fill:#7a4a00,color:#ffffff,stroke:#4d2e00
+  class stg_encounters,stg_conditions,stg_medications,stg_claims,stg_providers,stg_payers,fct_encounter,fct_claim,fct_readmission,dim_provider,dim_payer loader
+  class stg_patients_current,snap_patient,dim_patient history
+```
+
+Blue is built by `health_warehouse` and amber by `patient_history`, which is the whole of the DAG split; Orchestration below is why it falls there. `make docs` serves the same graph with the column-level documentation attached. The seven raw tables are one view each and are left out here.
+
 ## Late arrival, and the incremental model
 
 Encounters are windowed on their service date. Claims are windowed on the date they were **billed**, which is a different window for the same visit, and that is the point. The lag is the export's own and is right-skewed the way a real one is: median 0, 95th percentile 6 days, and a tail out to 100.
