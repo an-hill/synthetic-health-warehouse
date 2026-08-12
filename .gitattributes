@@ -7,3 +7,7 @@ data/**.parquet binary
 
 # Binary artefacts that must not be newline-touched.
 *.duckdb binary
+
+# The two Airflow screenshots, the only thing here the code cannot render for
+# itself. Retaking one commits a second copy for good, so take them once.
+*.png binary
