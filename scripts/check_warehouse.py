@@ -27,6 +27,10 @@ BACKWARDS_AS_OF = date(2025, 10, 1)
 # coverage and a further window would record lapses rather than switches.
 EXPECTED_VERSIONED_PATIENTS = 13
 
+# The window ends the two DAG intervals land, and so the as-of date the snapshot
+# captures after each. Not the three the CLI lands: the Airflow workflow says why.
+EXPECTED_DAG_AS_OF_DATES = [date(2025, 10, 1), date(2025, 11, 1)]
+
 # Counted from data/encounters.parquet independently of the model, so that a
 # wrong rule inside it has something to disagree with. 617 inpatient stays land,
 # of which 4 are discharged too near the end of the data to have been observed
@@ -69,6 +73,22 @@ def nothing_written_from_a_backwards_window(con: duckdb.DuckDBPyConnection) -> s
     return None
 
 
+def snapshot_ran_once_per_window(con: duckdb.DuckDBPyConnection) -> str | None:
+    """Check the asset-triggered DAG captured a version after every window the loader DAG landed.
+
+    The only assertion here that touches patient_history's output at all. It is
+    the count of as-of dates rather than of versions because a run executing the
+    tasks one at a time cannot say anything about how a real backfill interleaves
+    them, which is what the version counts in the README measure.
+    """
+    rows = con.execute("select distinct dbt_valid_from from snap_patient order by 1").fetchall()
+    captured = [row[0].date() for row in rows]
+    print("snapshot as-of dates: " + ", ".join(str(day) for day in captured))
+    if captured != EXPECTED_DAG_AS_OF_DATES:
+        return f"expected {[str(day) for day in EXPECTED_DAG_AS_OF_DATES]}"
+    return None
+
+
 def readmissions_match_the_export(con: duckdb.DuckDBPyConnection) -> str | None:
     """Check fct_readmission counts what the export holds, which its own tests cannot.
 
@@ -92,6 +112,7 @@ CHECKS: dict[str, Callable[[duckdb.DuckDBPyConnection], str | None]] = {
     "merge-reached-an-earlier-build": merge_reached_an_earlier_build,
     "snapshot-captured-the-payer-changes": snapshot_captured_the_payer_changes,
     "nothing-written-from-a-backwards-window": nothing_written_from_a_backwards_window,
+    "snapshot-ran-once-per-window": snapshot_ran_once_per_window,
     "readmissions-match-the-export": readmissions_match_the_export,
 }
 
