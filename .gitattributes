@@ -7,4 +7,3 @@ data/**.parquet binary
 
 # Binary artefacts that must not be newline-touched.
 *.duckdb binary
-*.png binary
