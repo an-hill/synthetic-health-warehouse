@@ -26,7 +26,7 @@ dist/
 # Personal notes and Claude artefacts. Never ships in the public repo.
 /.private/
 
-# The warehouse itself, rebuilt from the committed CSVs by the loader. Binary,
+# The warehouse itself, rebuilt from the committed Parquet by the loader. Binary,
 # rewritten every run, and git history is permanent, so committing it once
 # bloats every future clone even after removal.
 *.duckdb

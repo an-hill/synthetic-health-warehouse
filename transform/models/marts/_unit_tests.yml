@@ -1,0 +1,65 @@
+version: 2
+
+# Every fixture row carries all six columns fct_readmission reads, because an
+# omitted one is a null and a null _service_date moves the observation window
+# rather than failing.
+unit_tests:
+  - name: a_readmission_on_day_thirty_counts
+    model: fct_readmission
+    description: Day 30 is inside the window. Reading the bound as 29 drops a quarter of the readmissions in this export.
+    given:
+      - input: ref('fct_encounter')
+        rows:
+          - {encounter_id: index, patient_id: p1, encounter_class: inpatient, started_at: "2025-01-01 00:00:00", stopped_at: "2025-01-05 00:00:00", _service_date: "2025-01-01"}
+          - {encounter_id: later, patient_id: p1, encounter_class: inpatient, started_at: "2025-02-04 00:00:00", stopped_at: "2025-02-06 00:00:00", _service_date: "2025-02-04"}
+    expect:
+      rows:
+        - {index_encounter_id: index, patient_id: p1, admit_date: "2025-01-01", discharge_date: "2025-01-05", readmission_encounter_id: later, days_to_readmission: 30, is_readmitted: true}
+
+  - name: a_stay_beginning_on_the_day_of_discharge_is_a_transfer
+    model: fct_readmission
+    description: >
+      A gap of 0 or less is a transfer rather than a readmission. The excluded
+      stay then stands as its own index admission, which is why a transfer chain
+      is counted here as two admissions where a real measure would treat it as
+      one episode.
+    given:
+      - input: ref('fct_encounter')
+        rows:
+          - {encounter_id: first, patient_id: p1, encounter_class: inpatient, started_at: "2025-01-01 00:00:00", stopped_at: "2025-01-05 00:00:00", _service_date: "2025-01-01"}
+          - {encounter_id: transfer, patient_id: p1, encounter_class: inpatient, started_at: "2025-01-05 00:00:00", stopped_at: "2025-01-07 00:00:00", _service_date: "2025-01-05"}
+          # Not inpatient, so it makes no admission of its own and exists only to
+          # carry the observation window past both discharges.
+          - {encounter_id: visit, patient_id: p1, encounter_class: ambulatory, started_at: "2025-03-01 00:00:00", stopped_at: "2025-03-01 00:00:00", _service_date: "2025-03-01"}
+    expect:
+      rows:
+        - {index_encounter_id: first, patient_id: p1, admit_date: "2025-01-01", discharge_date: "2025-01-05", readmission_encounter_id: null, days_to_readmission: null, is_readmitted: false}
+        - {index_encounter_id: transfer, patient_id: p1, admit_date: "2025-01-05", discharge_date: "2025-01-07", readmission_encounter_id: null, days_to_readmission: null, is_readmitted: false}
+
+  - name: the_earliest_qualifying_stay_is_the_readmission
+    model: fct_readmission
+    description: The earliest qualifying stay rather than the next one, which are different encounters wherever stays overlap.
+    given:
+      - input: ref('fct_encounter')
+        rows:
+          - {encounter_id: index, patient_id: p1, encounter_class: inpatient, started_at: "2025-01-01 00:00:00", stopped_at: "2025-01-05 00:00:00", _service_date: "2025-01-01"}
+          - {encounter_id: earliest, patient_id: p1, encounter_class: inpatient, started_at: "2025-01-15 00:00:00", stopped_at: "2025-01-16 00:00:00", _service_date: "2025-01-15"}
+          - {encounter_id: latest, patient_id: p1, encounter_class: inpatient, started_at: "2025-01-25 00:00:00", stopped_at: "2025-01-26 00:00:00", _service_date: "2025-01-25"}
+          - {encounter_id: visit, patient_id: p1, encounter_class: ambulatory, started_at: "2025-04-01 00:00:00", stopped_at: "2025-04-01 00:00:00", _service_date: "2025-04-01"}
+    expect:
+      rows:
+        - {index_encounter_id: index, patient_id: p1, admit_date: "2025-01-01", discharge_date: "2025-01-05", readmission_encounter_id: earliest, days_to_readmission: 10, is_readmitted: true}
+        - {index_encounter_id: earliest, patient_id: p1, admit_date: "2025-01-15", discharge_date: "2025-01-16", readmission_encounter_id: latest, days_to_readmission: 9, is_readmitted: true}
+        - {index_encounter_id: latest, patient_id: p1, admit_date: "2025-01-25", discharge_date: "2025-01-26", readmission_encounter_id: null, days_to_readmission: null, is_readmitted: false}
+
+  - name: an_admission_observed_for_less_than_thirty_days_is_not_counted
+    model: fct_readmission
+    description: The denominator holds only admissions that had 30 days of observation after them, so a stay near the end of the data cannot count as not readmitted.
+    given:
+      - input: ref('fct_encounter')
+        rows:
+          - {encounter_id: observed, patient_id: p1, encounter_class: inpatient, started_at: "2025-01-01 00:00:00", stopped_at: "2025-01-05 00:00:00", _service_date: "2025-01-01"}
+          - {encounter_id: too_recent, patient_id: p1, encounter_class: inpatient, started_at: "2025-03-01 00:00:00", stopped_at: "2025-03-05 00:00:00", _service_date: "2025-03-01"}
+    expect:
+      rows:
+        - {index_encounter_id: observed, patient_id: p1, admit_date: "2025-01-01", discharge_date: "2025-01-05", readmission_encounter_id: null, days_to_readmission: null, is_readmitted: false}

@@ -21,3 +21,69 @@ jobs:
       # pull the airflow and dbt groups into a job that needs neither.
       - name: The DAGs parse and the split still covers the project
         run: make test-dags
+
+  # What this job proves is that the tasks run and build a warehouse worth
+  # asserting on. It does not exercise the pool, since one in-process run has
+  # nothing to contend with, and it does not exercise the asset trigger, since
+  # the consumer is invoked directly below. The README's measured claims about
+  # max_active_runs and the backfill rest on .private/coldstart.sh, not on this.
+  run:
+    runs-on: ubuntu-latest
+    env:
+      AIRFLOW_HOME: ${{ github.workspace }}/.airflow
+      AIRFLOW__CORE__DAGS_FOLDER: ${{ github.workspace }}/dags
+      # dags/warehouse.py is imported as a top-level module, and DagBag does not
+      # put the dag folder on sys.path where the scheduler does.
+      PYTHONPATH: ${{ github.workspace }}/dags
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Build the manifest Cosmos renders from
+        run: make parse
+
+      # The one-off a pipeline runs on the day it is deployed. Without it
+      # fct_readmission is empty, since the scheduled windows hold five
+      # inpatient stays between them.
+      - name: Land the history
+        run: |
+          uv run python -m loader.land --window-start 1900-01-01 --window-end 2025-09-01 \
+            --database include/warehouse.duckdb
+
+      # Both groups: Cosmos shells out to dbt, which is in the other one.
+      # airflow_settings.yaml creates the pool for Astro only, so a task here
+      # would otherwise queue against a pool that does not exist.
+      - name: An Airflow to run them in
+        run: |
+          uv run --group airflow --group dbt airflow db migrate
+          uv run --group airflow --group dbt airflow pools set warehouse 1 \
+            "One writer at a time against the single-writer warehouse"
+
+      # `dags test` creates a manual run, whose interval is inferred as the one
+      # *ending* at the logical date. A scheduled run of this timetable sets the
+      # logical date to the interval start instead, so these two dates land the
+      # windows the schedule would have run at 2025-09-01 and 2025-10-01. The
+      # third scheduled window is unreachable this way: it would need a logical
+      # date of 2025-12-01, which the DAG's end_date refuses, and the run comes
+      # out green having executed nothing at all.
+      - name: Land and build two windows through the DAGs
+        run: |
+          for interval in 2025-10-01 2025-11-01; do
+            uv run --group airflow --group dbt airflow dags test health_warehouse $interval
+            # By hand because CI has no scheduler to react to the asset.
+            uv run --group airflow --group dbt airflow dags test patient_history $interval
+          done
+
+      # Asserting on the warehouse rather than on exit codes, because a run that
+      # does nothing at all still exits zero. snapshot-captured-the-payer-changes
+      # is not among them: its 13 counts the patients moving across the window
+      # ends the CLI lands, and these are not those windows.
+      - name: The DAGs built the warehouse they claim to
+        run: |
+          for check in snapshot-ran-once-per-window readmissions-match-the-export \
+                       merge-reached-an-earlier-build; do
+            uv run python scripts/check_warehouse.py $check --database include/warehouse.duckdb
+          done

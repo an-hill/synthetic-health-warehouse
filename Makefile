@@ -12,7 +12,7 @@ DBT_DIRS := --project-dir transform --profiles-dir transform
 DBT_WAREHOUSE_PATH ?= $(CURDIR)/warehouse.duckdb
 export DBT_WAREHOUSE_PATH
 
-.PHONY: help test test-dags format lint lint-fix typecheck deps parse freshness build docs check-windows check-all
+.PHONY: help test test-dags format lint lint-sql lint-fix typecheck deps parse freshness build docs check-windows check-all
 .DEFAULT_GOAL := help
 
 help:  ## Show available targets
@@ -33,6 +33,11 @@ lint-fix:  ## Apply lint autofixes, then reformat
 lint:  ## Check style and formatting
 	$(RUN) ruff check .
 	$(RUN) ruff format --check .
+
+# Apart from lint, which stays runnable without the dbt group. The templater
+# compiles the project to resolve ref(), so this one cannot.
+lint-sql: deps  ## Check the SQL against the house style
+	$(RUN) --group dbt sqlfluff lint transform/models transform/tests transform/snapshots
 
 # The airflow group is only needed so ty can resolve the DAG's imports.
 typecheck:  ## Run ty
