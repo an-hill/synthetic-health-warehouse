@@ -1,10 +1,9 @@
 """Derives claims from the Synthea export and lands those that arrived in a window.
 
 Claims come from Synthea's own claims export, one row per real claim, linked to
-its encounter by `APPOINTMENTID`. An encounter bills 1 to 8 of them, and they
+its encounter by `APPOINTMENTID`. An encounter bills 1 to 46 of them, and they
 carry a real billing lag: mostly same-day, with a long right tail out to 100
-days. That tail is what `fct_claim`'s lookback has to be estimated against, and
-unlike an injected bound it is a property of the data rather than of us.
+days, which is a property of the data rather than a bound injected by us.
 
 The one distortion the export lacks is restatement: it contains no ADJUSTMENT
 transactions, so no claim ever re-arrives amended. That alone is injected, and
