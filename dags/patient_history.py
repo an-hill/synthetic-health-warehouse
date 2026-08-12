@@ -10,8 +10,8 @@ costs under a backfill.
 from datetime import timedelta
 
 from airflow.sdk import dag
-from cosmos import DbtTaskGroup, LoadMode, ProjectConfig, RenderConfig, TestBehavior
-from warehouse import OPERATOR_ARGS, PROFILE, PROJECT, SNAPSHOT_SELECTOR, WAREHOUSE_LANDED
+from cosmos import DbtTaskGroup, LoadMode, RenderConfig, TestBehavior
+from warehouse import OPERATOR_ARGS, PROFILE, PROJECT_CONFIG, SNAPSHOT_SELECTOR, WAREHOUSE_LANDED
 
 
 @dag(
@@ -24,10 +24,7 @@ def patient_history():
     """Snapshot the patients as they stand, then rebuild the dimension over the history."""
     DbtTaskGroup(
         group_id="snapshot",
-        project_config=ProjectConfig(
-            dbt_project_path=PROJECT,
-            manifest_path=PROJECT / "target" / "manifest.json",
-        ),
+        project_config=PROJECT_CONFIG,
         profile_config=PROFILE,
         render_config=RenderConfig(
             load_method=LoadMode.DBT_MANIFEST,

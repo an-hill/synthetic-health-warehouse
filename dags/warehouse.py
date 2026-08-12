@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from airflow.sdk import Asset
-from cosmos import ProfileConfig
+from cosmos import ProfileConfig, ProjectConfig
 
 # dags/ sits directly under the Airflow home in the image and under the
 # repository root in a checkout, so deriving the root rather than naming it is
@@ -23,6 +23,16 @@ PROFILE = ProfileConfig(
     profile_name="health_warehouse",
     target_name="dev",
     profiles_yml_filepath=PROJECT / "profiles.yml",
+)
+
+# install_dbt_deps defaults to true, so packages.yml existing is enough to make
+# every task run `dbt deps` in its temporary project copy and reach the hub at
+# run time. The image installs them once instead, and Cosmos links that
+# dbt_packages into the copy.
+PROJECT_CONFIG = ProjectConfig(
+    dbt_project_path=PROJECT,
+    manifest_path=PROJECT / "target" / "manifest.json",
+    install_dbt_deps=False,
 )
 
 # Cosmos runs dbt from a temporary copy of the project, so a relative warehouse

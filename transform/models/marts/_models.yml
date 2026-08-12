@@ -35,9 +35,9 @@ models:
       > d): the open version carries a null rather than a far-future sentinel,
       so nothing has to agree on which date means forever.
     data_tests:
-      - assert_grain_is_unique:
+      - dbt_utils.unique_combination_of_columns:
           arguments:
-            columns: [patient_id, valid_from]
+            combination_of_columns: [patient_id, valid_from]
     columns:
       - name: patient_id
         description: Repeated across a patient's versions, so unique only over the open ones.
@@ -185,6 +185,12 @@ models:
           admission rather than merging into the first, so a transfer chain is
           counted as two admissions where a real measure would treat it as one
           episode.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 30
+                inclusive: true
       - name: is_readmitted
         description: The numerator.
         data_tests: [not_null]
