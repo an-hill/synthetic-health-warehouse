@@ -1,0 +1,19 @@
+[sqlfluff]
+dialect = duckdb
+# The dbt templater rather than jinja, so ref() and is_incremental() resolve
+# through the real project rather than through stubs of it.
+templater = dbt
+# Two rules, not the default set. Indentation was tried and dropped: sqlfluff
+# reads a where continuation aligned under its predicate as wrong, and agreeing
+# with it would have reformatted nine files to catch nothing.
+rules = CP01, LT04
+
+[sqlfluff:templater:dbt]
+project_dir = transform
+profiles_dir = transform
+
+[sqlfluff:rules:capitalisation.keywords]
+capitalisation_policy = lower
+
+[sqlfluff:layout:type:comma]
+line_position = trailing

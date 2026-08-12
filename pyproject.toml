@@ -14,6 +14,11 @@ dev = [
     # Pinned exactly, deliberately. `ty` is beta on 0.0.x and diagnostics can
     # break between any two versions, so upgrades should be a deliberate act.
     "ty==0.0.66",
+    # Here rather than in the dbt group, which the Astro image installs and has
+    # no use for a linter. Its templater needs dbt, so `make lint-sql` asks for
+    # both groups.
+    "sqlfluff",
+    "sqlfluff-templater-dbt",
 ]
 # Separate from the loader's own dependencies: the loader must stay runnable and
 # testable without dbt installed, because in Airflow it runs as its own step.

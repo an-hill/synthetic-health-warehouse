@@ -17,6 +17,12 @@ jobs:
         with:
           enable-cache: true
 
+      # Here rather than in python-checks.yml, which would pull the dbt group
+      # into a job that needs neither it nor a warehouse. This compiles the
+      # project rather than querying it, so it runs before anything is landed.
+      - name: SQL style
+        run: make lint-sql
+
       # Everything the export holds before the scheduled windows begin.
       - name: Land the history
         run: |
