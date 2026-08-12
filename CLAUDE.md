@@ -74,7 +74,7 @@ The snapshot refuses it rather than absorbing it. A `pre_hook` on `snap_patient`
 
 `astro dev start` brings up Airflow on localhost:6563 and needs Docker running. `astro dev restart` rebuilds the image, which anything outside `dags/` and `include/` needs, since only those are bind-mounted.
 
-Two DAGs, sharing `dags/warehouse.py`. `health_warehouse` lands a window and builds every model but the snapshot's; `patient_history` runs the snapshot and `dim_patient`, triggered by an `Asset` rather than a schedule and with `catchup=False`, because a snapshot accumulates where every other model rebuilds. They are split by one Cosmos selector, `snap_patient+`, excluded by the first and selected by the second, so no node is built twice and no test runs in the DAG that lacks its model.
+Two DAGs, sharing `dags/warehouse.py`. `health_warehouse` lands a window and builds every model but the snapshot's; `patient_history` runs the snapshot and `dim_patient`, triggered by an `Asset` rather than a schedule and with `catchup=False`, because a snapshot accumulates where every other model rebuilds. They are split by one Cosmos selector, `stg_patients_current+`, excluded by the first and selected by the second, so no node is built twice and no test runs in the DAG that lacks its model. It starts at the view rather than at the snapshot so that the snapshot DAG owns everything it reads.
 
 The warehouse lives at `include/warehouse.duckdb` under Airflow, separately from the `warehouse.duckdb` the Makefile builds at the root. `include/` is bind-mounted, so it survives a rebuild and can be read from the host.
 
@@ -86,9 +86,9 @@ uv run python -m loader.land --window-start 1900-01-01 --window-end 2025-09-01 -
 
 Seven things about this stack that took finding:
 
-- **`RenderConfig.exclude` is forwarded to the `TestBehavior.AFTER_ALL` task, `select` too.** That is what makes the DAG split safe: excluding `snap_patient+` removes `dim_patient`'s tests along with the model, rather than leaving them to run against a table this DAG never builds.
+- **`RenderConfig.exclude` is forwarded to the `TestBehavior.AFTER_ALL` task, `select` too.** That is what makes the DAG split safe: excluding `stg_patients_current+` removes `dim_patient`'s tests along with the model, rather than leaving them to run against a table this DAG never builds.
 - **An outlet belongs on a task, not on `operator_args`,** which is global to the task group and would emit the asset from every model Cosmos generates. It sits on `land` because raw is the snapshot's only dependency.
-- **A backfill produces one consumer run per asset event,** three for three intervals here, and they run concurrently unless something stops them. All three then snapshot whatever `patients_current` has reached, which is the race the split accepts deliberately.
+- **A backfill produces one consumer run per asset event,** three for three intervals here, and nothing orders them against the producer that keeps triggering them. The single pool slot is what does: widen it, or `max_active_runs`, and all three snapshot whatever `patients_current` has reached by then.
 - **Airflow 3 resolves a bare cron string to a `CronTriggerTimetable`, whose interval is `timedelta(0)`.** Every run would hand the loader a window with start equal to end. `CronDataIntervalTimetable` is the one that still spans the period, and a month cannot be expressed as the fixed `timedelta` the trigger timetable takes.
 - **`end_date` bounds the logical date,** which that timetable sets to the interval *start*, so it admits the window beginning on that date rather than the one ending there.
 - **Cosmos takes `env` in `operator_args`, not `default_args`.** It runs dbt from a temporary copy of the project, so without an absolute `DBT_WAREHOUSE_PATH` the profile's relative default silently creates an empty database in that copy.
