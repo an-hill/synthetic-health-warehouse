@@ -36,7 +36,7 @@ models:
                 to: ref('stg_encounters')
                 field: encounter_id
       - name: condition_code
-        description: SNOMED CT, and the code set the condition-grouping seed has to cover.
+        description: SNOMED CT, carried as text because it is an identifier rather than a quantity.
         data_tests: [not_null]
       - name: onset_on
         description: When the condition started, which can precede its encounter by years.
