@@ -16,6 +16,9 @@ dist/
 .pytest_cache/
 .ruff_cache/
 
+# Written by importing airflow, which insists on an AIRFLOW_HOME existing.
+.airflow/
+
 # ---------------------------------------------------------------------------
 # dbt-airflow
 # ---------------------------------------------------------------------------
