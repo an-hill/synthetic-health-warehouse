@@ -1,5 +1,7 @@
 # Synthetic health warehouse
 
+[![Python checks](https://github.com/an-hill/synthetic-health-warehouse/actions/workflows/python-checks.yml/badge.svg)](https://github.com/an-hill/synthetic-health-warehouse/actions/workflows/python-checks.yml) [![dbt](https://github.com/an-hill/synthetic-health-warehouse/actions/workflows/dbt.yml/badge.svg)](https://github.com/an-hill/synthetic-health-warehouse/actions/workflows/dbt.yml) [![Airflow](https://github.com/an-hill/synthetic-health-warehouse/actions/workflows/airflow.yml/badge.svg)](https://github.com/an-hill/synthetic-health-warehouse/actions/workflows/airflow.yml)
+
 An analytics pipeline over synthetic patient data: a windowed loader, a dbt star schema, and two Airflow DAGs. The domain was chosen for its awkwardness (and my experience working with it). Claims arrive weeks after the visit they bill for, records get restated, and patient attributes change, which is what makes incremental models, snapshots, and idempotent backfills necessary.
 
 ```
