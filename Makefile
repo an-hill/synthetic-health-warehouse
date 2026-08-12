@@ -12,7 +12,7 @@ DBT_DIRS := --project-dir transform --profiles-dir transform
 DBT_WAREHOUSE_PATH ?= $(CURDIR)/warehouse.duckdb
 export DBT_WAREHOUSE_PATH
 
-.PHONY: help test test-dags format lint lint-fix typecheck parse freshness build docs check-windows check-all
+.PHONY: help test test-dags format lint lint-fix typecheck deps parse freshness build docs check-windows check-all
 .DEFAULT_GOAL := help
 
 help:  ## Show available targets
@@ -38,7 +38,12 @@ lint:  ## Check style and formatting
 typecheck:  ## Run ty
 	$(RUN) --group airflow ty check
 
-parse:  ## Build the dbt manifest the DAGs render from
+deps:  ## Install the packages named in transform/packages.yml
+	$(DBT) deps $(DBT_DIRS)
+
+# A prerequisite of everything that compiles the project rather than a step to
+# remember, since a fresh clone has no dbt_packages and dbt then refuses to run.
+parse: deps  ## Build the dbt manifest the DAGs render from
 	$(DBT) parse $(DBT_DIRS)
 
 # Out of check-all because it needs both optional groups: dbt to build the
@@ -49,10 +54,10 @@ test-dags: parse  ## Parse both DAGs, and check the selector splitting them stil
 
 # Out of check-all deliberately: these need a loaded warehouse and the dbt group,
 # and check-all has to keep running without either.
-freshness:  ## Check how recently the loader last wrote each raw table
+freshness: deps  ## Check how recently the loader last wrote each raw table
 	$(DBT) source freshness $(DBT_DIRS)
 
-build:  ## Build the models and run their tests
+build: deps  ## Build the models and run their tests
 	$(DBT) build $(DBT_DIRS)
 
 # Out of check-all for the same reason as freshness, and additionally because
@@ -64,7 +69,7 @@ check-windows:  ## Assert what two landed windows should have produced
 
 # Regenerated every time because serve will otherwise hand back an older graph
 # without saying so.
-docs:  ## Serve the model documentation and lineage graph on localhost:8080
+docs: deps  ## Serve the model documentation and lineage graph on localhost:8080
 	$(DBT) docs generate $(DBT_DIRS)
 	$(DBT) docs serve $(DBT_DIRS)
 

@@ -37,7 +37,8 @@ If a `make` target fails, reach for `uv run <command>` rather than a bare `pytho
 | `snapshots/` | `snap_patient`, the type-2 history behind `dim_patient`. |
 | `models/*/_models.yml` | Descriptions and generic tests, one per directory. |
 | `models/staging/_sources.yml` | Both sources: `raw`, and `meta` for the loader's injection log. |
-| `macros/` | Custom generic tests, and the snapshot's write guard. |
+| `macros/` | `refuse_a_backwards_as_of_date`, the snapshot's write guard. |
+| `packages.yml` | One package, `dbt_utils`, pinned by `package-lock.yml`. `make deps` installs it, and every target that compiles the project depends on it. |
 | `transform/tests/` | Singular tests, each a query that must return no rows. Not `tests/`, which is pytest over the loader. |
 
 Four things about dbt here that took finding:
@@ -84,7 +85,7 @@ The DAG's intervals are the scheduled windows only, so land the history into it 
 uv run python -m loader.land --window-start 1900-01-01 --window-end 2025-09-01 --database include/warehouse.duckdb
 ```
 
-Seven things about this stack that took finding:
+Eight things about this stack that took finding:
 
 - **`RenderConfig.exclude` is forwarded to the `TestBehavior.AFTER_ALL` task, `select` too.** That is what makes the DAG split safe: excluding `stg_patients_current+` removes `dim_patient`'s tests along with the model, rather than leaving them to run against a table this DAG never builds.
 - **An outlet belongs on a task, not on `operator_args`,** which is global to the task group and would emit the asset from every model Cosmos generates. It sits on `land` because raw is the snapshot's only dependency.
@@ -93,6 +94,7 @@ Seven things about this stack that took finding:
 - **`end_date` bounds the logical date,** which that timetable sets to the interval *start*, so it admits the window beginning on that date rather than the one ending there.
 - **Cosmos takes `env` in `operator_args`, not `default_args`.** It runs dbt from a temporary copy of the project, so without an absolute `DBT_WAREHOUSE_PATH` the profile's relative default silently creates an empty database in that copy.
 - **`ProjectConfig.dbt_project_path` and `ExecutionConfig.dbt_project_path` are mutually exclusive,** and `LoadMode.DBT_MANIFEST` needs `manifest_path` given explicitly.
+- **`ProjectConfig.install_dbt_deps` defaults to true, and resolves to false only while no `packages.yml` exists.** Adding one is therefore enough to make every dbt task fetch from the package hub at run time, in its temporary project copy. `install_dbt_deps=False` links the image's `dbt_packages` instead, which is why the Dockerfile installs them.
 
 ## Code conventions
 

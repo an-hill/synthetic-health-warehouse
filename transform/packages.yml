@@ -1,0 +1,6 @@
+packages:
+  # A range rather than a pin, with package-lock.yml committed beside it, on the
+  # same split as uv.lock: the range says what is compatible, the lock says what
+  # is installed.
+  - package: dbt-labs/dbt_utils
+    version: [">=1.3.0", "<2.0.0"]

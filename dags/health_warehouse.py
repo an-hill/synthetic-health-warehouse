@@ -9,12 +9,13 @@ from datetime import UTC, datetime, timedelta
 
 from airflow.sdk import dag, task
 from airflow.timetables.interval import CronDataIntervalTimetable
-from cosmos import DbtTaskGroup, LoadMode, ProjectConfig, RenderConfig, TestBehavior
+from cosmos import DbtTaskGroup, LoadMode, RenderConfig, TestBehavior
 from cosmos.operators.local import DbtSourceLocalOperator
 from warehouse import (
     OPERATOR_ARGS,
     PROFILE,
     PROJECT,
+    PROJECT_CONFIG,
     SNAPSHOT_SELECTOR,
     WAREHOUSE,
     WAREHOUSE_LANDED,
@@ -66,10 +67,7 @@ def health_warehouse():
 
     build = DbtTaskGroup(
         group_id="build",
-        project_config=ProjectConfig(
-            dbt_project_path=PROJECT,
-            manifest_path=PROJECT / "target" / "manifest.json",
-        ),
+        project_config=PROJECT_CONFIG,
         profile_config=PROFILE,
         render_config=RenderConfig(
             load_method=LoadMode.DBT_MANIFEST,
