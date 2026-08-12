@@ -193,6 +193,33 @@ class TestBackfillSafety:
 
         assert {t: landed(database, f"select count(*) from {t}") for t in TABLES} == before
 
+    def test_a_load_that_fails_after_replacing_a_dimension_leaves_it_untouched(
+        self, database: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The static dimensions take a different path, `create or replace table`, and DDL need not be transactional.
+
+        The case above only ever kills inside `_land`, so the assumption that
+        DuckDB rolls a replaced table back was never exercised by a test.
+        """
+        land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
+        before = {t: landed(database, f"select count(*) from {t}") for t in TABLES}
+
+        real_land_whole = land_module._land_whole
+
+        def die_after_replacing(con, source, name):
+            """Reproduce a load killed once a dimension has been replaced but before the window commits."""
+            if name == "payers":
+                con.execute("create or replace table raw.payers as select * from raw.payers where false")
+                raise RuntimeError("load dies partway through the window")
+            return real_land_whole(con, source, name)
+
+        monkeypatch.setattr(land_module, "_land_whole", die_after_replacing)
+
+        with pytest.raises(RuntimeError, match="dies partway"):
+            land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
+
+        assert {t: landed(database, f"select count(*) from {t}") for t in TABLES} == before
+
     def test_adjacent_windows_tile_into_the_combined_window(self, database: Path, tmp_path: Path) -> None:
         land_window(DAY, NEXT_DAY, database=database, source=SOURCE)
         land_window(NEXT_DAY, DAY_AFTER, database=database, source=SOURCE)

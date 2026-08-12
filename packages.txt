@@ -1,0 +1,2 @@
+# Deliberately empty, like requirements.txt. Nothing here needs an OS package:
+# the image's base carries dbt's build dependencies already.
