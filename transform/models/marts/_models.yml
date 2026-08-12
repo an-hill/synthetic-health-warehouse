@@ -7,10 +7,6 @@ models:
       only those with an encounter in the landed window, so the dimension does
       not change shape under the fact it is conformed against. Synthea's
       speciality is left behind: all 650 providers are GENERAL PRACTICE.
-    data_tests:
-      - assert_grain_is_unique:
-          arguments:
-            columns: [provider_id]
     columns:
       - name: provider_id
         data_tests: [unique, not_null]
@@ -19,10 +15,6 @@ models:
 
   - name: dim_payer
     description: One row per payer, including NO_INSURANCE, which is how the source records an uncovered patient rather than by a null.
-    data_tests:
-      - assert_grain_is_unique:
-          arguments:
-            columns: [payer_id]
     columns:
       - name: payer_id
         data_tests: [unique, not_null]
@@ -81,10 +73,6 @@ models:
       claim amounts: raw claims are an append log, so summing them here would
       count a restatement twice, and they are windowed on their billing date so
       any total stored here would go stale as later claims arrive.
-    data_tests:
-      - assert_grain_is_unique:
-          arguments:
-            columns: [encounter_id]
     columns:
       - name: encounter_id
         data_tests: [unique, not_null]
@@ -132,10 +120,6 @@ models:
       than the one already held for that same claim, which is what makes the
       order windows land in irrelevant. Re-landing a window it has already built
       over needs --full-refresh, because a merge cannot delete.
-    data_tests:
-      - assert_grain_is_unique:
-          arguments:
-            columns: [claim_id]
     columns:
       - name: claim_id
         description: Shared by a claim's original submission and any restatement, and the key the merge collapses them on.
@@ -174,10 +158,6 @@ models:
       and account for 110 of the 125, and 79 of the inpatient encounters are a
       recurring detoxification regimen that a real measure would exclude as
       planned. The query is the point; the rate is an artefact of the generator.
-    data_tests:
-      - assert_grain_is_unique:
-          arguments:
-            columns: [index_encounter_id]
     columns:
       - name: index_encounter_id
         description: The admission being measured, and the only encounter here that had to have 30 days of observation after it.
