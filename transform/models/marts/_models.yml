@@ -27,7 +27,7 @@ models:
       is versioned: the payer and death are what move in this export, but the
       source stands in for a live patient system, where a corrected birthdate
       or a re-collected ethnicity is ordinary. Built from
-      snap_patient alone: patients.csv
+      snap_patient alone: patients.parquet
       is not landed, so patients_current is the only patient source there is.
       Age is left out and derived at query time instead, since versioning it
       would add a row per patient per year and bury the changes that matter.
