@@ -261,10 +261,11 @@ class TestClaims:
         assert landed(database, "select count(*) from raw.claims") > [(0,)]
 
     def test_the_billing_lag_is_the_real_one_and_is_right_skewed(self, database: Path) -> None:
-        """Check the lag comes from the export rather than from us.
+        """Check the lag comes from the export rather than from the loader.
 
-        The tail is a property of the data, which is what makes fct_claim's lookback
-        something to estimate rather than something we already know.
+        A tail reaching 100 days is what makes late arrival real, since a claim
+        billed in one window for a service in another is what fct_claim's merge
+        has to absorb.
         """
         land_window(*CLAIM_WINDOW, database=database, source=SOURCE)
 
@@ -364,7 +365,7 @@ class TestClaims:
         assert mismatched == 0
 
     def test_the_claims_for_an_encounter_sum_to_its_cost(self, database: Path) -> None:
-        """The fan-out challenge of §6: several claims per encounter must not inflate its cost."""
+        """Each claim carries a share of the encounter's cost, so the fan-out cannot multiply it."""
         land_window(*CLAIM_WINDOW, database=database, source=SOURCE)
 
         [(checked, mismatched)] = landed(

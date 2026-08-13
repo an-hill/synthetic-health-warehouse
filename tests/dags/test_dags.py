@@ -24,7 +24,7 @@ pytest.importorskip("cosmos")
 # without one every DAG fails to import and each assertion below fails for a
 # reason that has nothing to do with what it checks.
 if not MANIFEST.exists():
-    pytest.skip(f"{MANIFEST} is absent; `make test-dags` builds it first", allow_module_level=True)
+    pytest.skip(f"{MANIFEST} is absent. `make test-dags` builds it first", allow_module_level=True)
 
 # Cosmos names each task for the node it builds and the dbt command it runs.
 BUILD_SUFFIXES = ("_run", "_snapshot")
@@ -121,8 +121,8 @@ def model_parents(manifest: dict) -> dict[str, set[str]]:
 class TestTheDagSplit:
     """One Cosmos selector divides the dbt project between two DAGs, and nothing at runtime checks it.
 
-    A selector that stops matching does not fail: the loader DAG simply builds a
-    node the snapshot DAG also builds, or neither builds it and the warehouse is
+    A selector that stops matching does not fail: the loader DAG builds a node
+    the snapshot DAG also builds, or neither builds it and the warehouse is
     quietly missing a model.
     """
 
@@ -169,7 +169,7 @@ class TestTheDagSplit:
             assert len(tests) == 1, f"{name} has {len(tests)} test tasks"
 
     def test_only_the_land_task_emits_the_asset(self, dagbag) -> None:
-        """Both DAGs read one asset constant, so equality between them proves nothing; where it sits does.
+        """Both DAGs read one asset constant, so equality between them proves nothing. Where it sits does.
 
         On `operator_args` the outlet is global to the task group and every model
         Cosmos generates emits it, releasing the snapshot before raw has moved.

@@ -3,7 +3,7 @@
 Claims come from Synthea's own claims export, one row per real claim, linked to
 its encounter by `APPOINTMENTID`. An encounter bills 1 to 46 of them, and they
 carry a real billing lag: mostly same-day, with a long right tail out to 100
-days, which is a property of the data rather than a bound injected by us.
+days, which is a property of the data rather than a bound the loader chose.
 
 The one distortion the export lacks is restatement: it contains no ADJUSTMENT
 transactions, so no claim ever re-arrives amended. That alone is injected, and
@@ -36,8 +36,8 @@ def create_tables(con: duckdb.DuckDBPyConnection) -> None:
     which carries no charge column. `meta.injection_log` has no source file at all.
 
     `raw.claims` carries no restatement flag on purpose. Raw holds what the
-    source sent; knowing which arrival amended another is the answer key's job,
-    and keeping them apart is what forces `fct_claim` to collapse duplicates by
+    source sent, and knowing which arrival amended another is the answer key's
+    job. Keeping them apart is what forces `fct_claim` to collapse duplicates by
     merging on the claim id rather than by filtering a convenient column.
     """
     con.execute("""

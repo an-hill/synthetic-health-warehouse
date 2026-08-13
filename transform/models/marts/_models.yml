@@ -23,20 +23,20 @@ models:
 
   - name: dim_patient
     description: >
-      One row per patient per version of their attributes, every one of which
-      is versioned: the payer and death are what move in this export, but the
-      source stands in for a live patient system, where a corrected birthdate
-      or a re-collected ethnicity is ordinary. Built from
-      snap_patient alone: patients.parquet
-      is not landed, so patients_current is the only patient source there is.
-      Age is left out and derived at query time instead, since versioning it
-      would add a row per patient per year and bury the changes that matter.
-      Read as of a date with valid_from <= d and (valid_to is null or valid_to
-      > d): the open version carries a null rather than a far-future sentinel,
-      so nothing has to agree on which date means forever. The contract is here
-      for those two columns: a reader comparing a timestamp against a date is
-      relying on a cast, and this is what makes the build fail rather than the
-      cast change under them.
+      A type-2 slowly changing dimension, one row per patient per version of
+      their attributes, every one of which is versioned. The payer and death
+      are what move in this export, but the source stands in for a live patient
+      system, where a corrected birthdate or a re-collected ethnicity is
+      ordinary. Built from snap_patient alone, since patients.parquet is not
+      landed and patients_current is the only patient source there is. Age is
+      left out and derived at query time instead, because versioning it would
+      add a row per patient per year and bury the changes that matter. Read as
+      of a date with valid_from <= d and (valid_to is null or valid_to > d),
+      where the open version carries a null rather than a far-future sentinel,
+      so nothing has to agree on which date means forever. The contract is
+      enforced for those two columns because a reader comparing a timestamp
+      against a date is relying on a cast, and this is what makes the build
+      fail rather than the cast change under them.
     config:
       contract:
         enforced: true
@@ -175,16 +175,16 @@ models:
       sum(is_readmitted) over count(*), computed by whoever asks rather than
       stored, so a cut by payer or by year needs no new model. An index
       admission is an inpatient encounter discharged at least 30 days before
-      the latest admission the warehouse holds; a readmission is the earliest
+      the latest admission the warehouse holds. A readmission is the earliest
       later inpatient admission for the same patient, 1 to 30 days after that
-      discharge. Day 30 counts, and the choice is not cosmetic: Synthea
-      generates recurring admissions on near-monthly cycles, so 32 of the 125
-      readmissions sit exactly on day 30 and reading the bound as 29 would drop
-      a quarter of them. The number is not clinically meaningful. Synthea does
-      not model readmission behaviour, seven patients hold 20 or more stays each
-      and account for 110 of the 125, and 79 of the inpatient encounters are a
-      recurring detoxification regimen that a real measure would exclude as
-      planned. The query is the point; the rate is an artefact of the generator.
+      discharge. Day 30 counts because Synthea generates recurring admissions
+      on near-monthly cycles, so 32 of the 125 readmissions sit exactly on day
+      30 and reading the bound as 29 would drop a quarter of them. The number
+      is not clinically meaningful. Synthea does not model readmission
+      behaviour, seven patients hold 20 or more stays each and account for 110
+      of the 125, and 79 of the inpatient encounters are a recurring
+      detoxification regimen that a real measure would exclude as planned. The
+      query is the deliverable. The rate is an artefact of the generator.
       The contract is here for the column set: this is the one mart a consumer
       would compute a rate from, and a column quietly added or dropped changes
       what that rate is over.

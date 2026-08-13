@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 PROJECT = ROOT / "transform"
 
-# include/ is bind-mounted; anywhere else in the image is discarded on rebuild.
+# include/ is bind-mounted, and anywhere else in the image is discarded on rebuild.
 WAREHOUSE = ROOT / "include" / "warehouse.duckdb"
 
 # What patient_history waits for. The snapshot reads a state rather than a

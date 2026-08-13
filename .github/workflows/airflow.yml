@@ -26,7 +26,7 @@ jobs:
   # asserting on. It does not exercise the pool, since one in-process run has
   # nothing to contend with, and it does not exercise the asset trigger, since
   # the consumer is invoked directly below. The README's measured claims about
-  # max_active_runs and the backfill rest on .private/coldstart.sh, not on this.
+  # max_active_runs and the backfill come from a local run, not from this job.
   run:
     runs-on: ubuntu-latest
     env:

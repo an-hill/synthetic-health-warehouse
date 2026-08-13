@@ -4,7 +4,7 @@ FROM astrocrpublic.azurecr.io/runtime:3.3-2
 
 # The loader runs as a DAG task rather than a shell step, so it has to import.
 # Its groups come from pyproject.toml so the image and the Makefile cannot pin
-# dbt differently; requirements.txt exists only to satisfy the ONBUILD above.
+# dbt differently. requirements.txt exists only to satisfy the ONBUILD above.
 RUN pip install --no-cache-dir -e . --group dbt --group airflow
 
 # Installed at build time so no task reaches the package hub at run time, which

@@ -104,9 +104,10 @@ models:
 
   - name: stg_patients_current
     description: >
-      One row per patient alive at the window end, holding only the attributes
-      that can honestly be evaluated as of a date. Replaced outright each run,
-      so it shows current state alone and a snapshot has something to observe.
+      One row per patient alive at the window end, holding every attribute but
+      the ones that change on a date Synthea does not record: marital status,
+      address, and income. Replaced outright each run, so it shows current
+      state alone and a snapshot has something to observe.
     columns:
       - name: patient_id
         data_tests: [unique, not_null]
