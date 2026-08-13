@@ -45,9 +45,9 @@ def land_window(
 ) -> LoadReport:
     """Land the records belonging to a date window into the raw schema.
 
-    Encounters and their children are selected by service date; claims are
-    selected by the date they were billed, which is days or weeks later, so one
-    window holds two different notions of what belongs to it.
+    Encounters and their children are selected by service date, and claims by
+    the date they were billed, which is days or weeks later, so one window
+    holds two different notions of what belongs to it.
 
     Args:
         start: First date to land, inclusive.

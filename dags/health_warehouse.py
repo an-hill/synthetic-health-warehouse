@@ -56,7 +56,8 @@ def health_warehouse():
         report = land_window(data_interval_start.date(), data_interval_end.date(), database=WAREHOUSE)  # ty: ignore[unresolved-attribute]
         return report.rows
 
-    # A precondition: after the build it would tell you nothing you can act on.
+    # A precondition, since after the build it reports on sources the models
+    # have already been built over.
     freshness = DbtSourceLocalOperator(
         task_id="source_freshness",
         project_dir=PROJECT,

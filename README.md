@@ -102,9 +102,9 @@ Encounters are windowed on their service date. Claims are windowed on the date t
 
 The export holds no amendments, so restatement is injected by the loader: 5% of claims re-arrive 1 to 30 days later under the same `claim_id` with a changed amount, recorded in `meta.injection_log`. That makes `raw.claims` an append log, and collapsing 63,417 arrivals into 60,433 claims is `fct_claim`'s job, by a merge on the claim id.
 
-The filter compares each arrival against the row held for that same claim, not against a table-wide high-water mark. The obvious alternative, `received_date > (select max(received_date) from {{ this }})`, prunes better but is correct only while windows land in ascending order and are never re-landed. If you land the same three windows in reverse it leaves only **422 claims out of 60,433**, because every earlier arrival sits behind the mark the latest window set. The per-claim comparison gives 60,433 either way.
+The filter compares each arrival against the row held for that same claim, not against a table-wide high-water mark. The obvious alternative, `received_date > (select max(received_date) from {{ this }})`, prunes better but is correct only while windows land in ascending order and are never re-landed. Landing the same three windows in reverse leaves only **422 claims out of 60,433**, because every earlier arrival sits behind the mark the latest window set. The per-claim comparison gives 60,433 either way.
 
-Keeping the wrong arrival is invisible to every structural test: row count, grain, and uniqueness are correct whichever you keep. `meta.injection_log` is declared as a dbt source so that one test can reconcile the landed amounts against what was injected.
+Keeping the wrong arrival is invisible to every structural test: row count, grain, and uniqueness are correct whichever arrival survives. `meta.injection_log` is declared as a dbt source so that one test can reconcile the landed amounts against what was injected.
 
 ### Known limitation
 

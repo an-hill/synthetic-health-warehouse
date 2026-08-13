@@ -5,7 +5,7 @@ time, so it needs a source that mutates. Synthea hands over history directly,
 which is the opposite: dated rows in a file that never changes. This table
 deliberately throws that history away and holds only the current state, letting
 the snapshot rediscover the history one window at a time. Most operational
-source systems really do show only current state; the export is the odd one.
+source systems really do show current state alone. The export is the odd one.
 
 What changes is the payer, taken from the payer transitions export, which is real
 coverage history rather than anything injected. Death is the other.
@@ -16,10 +16,11 @@ from datetime import date
 import duckdb
 
 # Attributes of the patients export deliberately left out. MARITAL, ADDRESS, CITY,
-# ZIP, INCOME and HEALTHCARE_EXPENSES are current values fixed at generation
-# time, so stamping them onto a row dated years earlier would assert something
-# false, and a date-aware join to dim_patient would return a confidently wrong
-# answer. AGE is excluded for a different reason: it is derivable from the
+# ZIP, INCOME, and HEALTHCARE_EXPENSES change over a life rather than get
+# corrected, on a date a real patient system records and Synthea withholds. It
+# gives one undated value per patient, so stamping that onto a row dated years
+# earlier would make a date-aware join to dim_patient confidently wrong. AGE is
+# excluded for a different reason: it is derivable from the
 # birthdate and the date being asked about, and versioning it would add a
 # dimension row per patient per year, burying the changes that matter.
 

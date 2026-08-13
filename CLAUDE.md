@@ -101,17 +101,18 @@ Eight things about this stack that took finding:
 **Google-style docstrings throughout.** Sections are `Args:`, `Returns:`, `Raises:`, `Yields:`, and `Example:`.
 
 ```python
-def land_window(start: date, end: date, *, seed: int | None = None) -> LoadReport:
+def land_window(start: date, end: date, *, seed: int = claims.DEFAULT_SEED) -> LoadReport:
     """Land the records belonging to a date window, replacing anything already there.
 
     Args:
-        start: First service date to land, inclusive.
-        end: Last service date to land, exclusive.
-        seed: Fixes the injected claim lags and restatements, so a window lands
-            identically on every run. Defaults to nondeterministic injection.
+        start: First date to land, inclusive.
+        end: First date beyond the window, exclusive, so that adjacent windows
+            tile without overlap or gap.
+        seed: Salts the injected claim restatements. Fixed by default, because
+            a repeated backfill has to be identical.
 
     Returns:
-        The counts landed per table, and the path of the injection log written.
+        The counts landed per table.
     """
 ```
 

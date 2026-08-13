@@ -95,7 +95,7 @@ def readmissions_match_the_export(con: duckdb.DuckDBPyConnection) -> str | None:
     The singular tests restate the model's rules, so they catch the model
     drifting from them and not the rules themselves being changed. Widening the
     gap to admit same-day transfers in the model alone fails
-    assert_readmission_is_the_earliest_qualifying; widening it in that test too,
+    assert_readmission_is_the_earliest_qualifying. Widening it in that test too,
     which is how a rule actually gets changed, leaves every dbt check green over
     142 readmissions rather than 125. A count fixed outside the project is the
     only thing that notices.

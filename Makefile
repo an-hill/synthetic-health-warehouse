@@ -25,7 +25,8 @@ test:  ## Run the test suite
 format:  ## Format in place
 	$(RUN) ruff format .
 
-# Local only - never CI/CD
+# Local only, because a fix applied in CI would report a green run over code
+# nobody has seen.
 lint-fix:  ## Apply lint autofixes, then reformat
 	$(RUN) ruff check --fix .
 	$(RUN) ruff format .

@@ -37,10 +37,10 @@ sources:
 
       - name: patients_current
         description: >
-          One row per patient alive at the window end, holding the attributes
-          that can honestly be evaluated as of a date and rewritten whole on
-          every run. It shows current state alone so that a snapshot has a
-          mutating source to observe.
+          One row per patient alive at the window end, holding every attribute
+          but the ones that change on a date Synthea does not record, and
+          rewritten whole on every run. It shows current state alone so that a
+          snapshot has a mutating source to observe.
 
   - name: meta
     description: >
