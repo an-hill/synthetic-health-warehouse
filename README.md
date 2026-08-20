@@ -200,4 +200,4 @@ MIT, covering the code. The export under `data/` is the output of [Synthea](http
 
 ## Assistance
 
-Developed with the assistance of [Claude Code](https://claude.com/claude-code). Every line of code and text in this repository was directed or reviewed by me personally.
+Developed with the assistance of [Claude Code](https://claude.com/claude-code). Every line of code and text in this repository was written, directed, or reviewed by me personally.
